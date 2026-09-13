@@ -4,34 +4,42 @@ import 'models.dart';
 class NewPipeService {
   /// অনুসন্ধান
   Future<List<VideoItem>> search(String query) async {
-    final page = await SearchExtractor.searchYoutube(
+    final response = await SearchExtractor.searchYoutube(
       query,
       [SearchFilter.videos.value],
     );
-    return page.items.map(_toVideo).toList();
+    // response একটি record: (result: SearchResult, next: PageToken?)
+    final result = response.result;
+    return result.items.map(_toVideo).toList();
   }
 
   /// ট্রেন্ডিং
   Future<List<VideoItem>> getTrending() async {
-    final page = await TrendingExtractor.getTrendingVideos();
-    return page.items.map(_toVideo).toList();
+    final response = await TrendingExtractor.getTrendingVideos();
+    // এখানেও record হলে .result ব্যবহার করুন
+    final result = response.result;
+    return result.items.map(_toVideo).toList();
   }
 
   /// সবচেয়ে ভালো মিক্সড স্ট্রিম URL পান (সর্বোচ্চ 720p)
-  /// মিক্সড স্ট্রিম না থাকলে null ফেরত দেয়
   Future<String?> getBestMuxedStreamUrl(String videoUrl) async {
     final video = await VideoExtractor.getStream(videoUrl);
     final muxed = video.videoWithHighestQuality;
-    if (muxed != null && muxed.url.isNotEmpty) {
-      return muxed.url;
-    }
-    return null;
+
+    if (muxed == null) return null;
+
+    // videoStreams কখনো null হতে পারে, তাই safe access
+    final url = muxed.videoStreams?.url ?? muxed.url;
+    if (url.isEmpty) return null;
+
+    return url;
   }
 
   /// চ্যানেলের ভিডিও তালিকা
   Future<List<VideoItem>> getChannelVideos(String channelUrl) async {
-    final page = await ChannelExtractor.getChannelUploads(channelUrl);
-    return page.items.map(_toVideo).toList();
+    final response = await ChannelExtractor.getChannelUploads(channelUrl);
+    final result = response.result;
+    return result.items.map(_toVideo).toList();
   }
 
   VideoItem _toVideo(dynamic item) {
