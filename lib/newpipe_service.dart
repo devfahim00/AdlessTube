@@ -4,20 +4,20 @@ import 'models.dart';
 class NewPipeService {
   /// অনুসন্ধান
   Future<List<VideoItem>> search(String query) async {
-    final response = await SearchExtractor.searchYoutube(
+    // searchYoutube returns SearchResult (not a record)
+    final result = await SearchExtractor.searchYoutube(
       query,
       [SearchFilter.videos.value],
     );
-    // response একটি record: (result: SearchResult, next: PageToken?)
-    final result = response.result;
+    // SearchResult has 'items' getter
     return result.items.map(_toVideo).toList();
   }
 
   /// ট্রেন্ডিং
   Future<List<VideoItem>> getTrending() async {
-    final response = await TrendingExtractor.getTrendingVideos();
-    // এখানেও record হলে .result ব্যবহার করুন
-    final result = response.result;
+    // getTrendingVideos returns a record: ({List<StreamInfoItem> items, PageToken? next})
+    final result = await TrendingExtractor.getTrendingVideos();
+    // Access 'items' directly (it's a record field)
     return result.items.map(_toVideo).toList();
   }
 
@@ -28,8 +28,8 @@ class NewPipeService {
 
     if (muxed == null) return null;
 
-    // videoStreams কখনো null হতে পারে, তাই safe access
-    final url = muxed.videoStreams?.url ?? muxed.url;
+    // VideoStream-এ সরাসরি 'url' property আছে
+    final url = muxed.url;
     if (url.isEmpty) return null;
 
     return url;
@@ -37,8 +37,8 @@ class NewPipeService {
 
   /// চ্যানেলের ভিডিও তালিকা
   Future<List<VideoItem>> getChannelVideos(String channelUrl) async {
-    final response = await ChannelExtractor.getChannelUploads(channelUrl);
-    final result = response.result;
+    // getChannelUploads returns: ({List<StreamInfoItem> items, PageToken? next})
+    final result = await ChannelExtractor.getChannelUploads(channelUrl);
     return result.items.map(_toVideo).toList();
   }
 
