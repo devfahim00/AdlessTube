@@ -12,8 +12,7 @@ class NewPipeService {
     final searchResult = response.result;
     if (searchResult == null) return [];
 
-    final videos = searchResult.videos;
-    return videos.map(_toVideo).toList();
+    return searchResult.videos.map(_toVideo).toList();
   }
 
   /// ট্রেন্ডিং
@@ -22,7 +21,7 @@ class NewPipeService {
     return result.items.map(_toVideo).toList();
   }
 
-  /// সবচেয়ে ভালো মিক্সড স্ট্রিম URL পান (সর্বোচ্চ 720p)
+  /// সবচেয়ে ভালো মিক্সড স্ট্রিম URL পান
   Future<String?> getBestMuxedStreamUrl(String videoUrl) async {
     final video = await VideoExtractor.getStream(videoUrl);
     final muxed = video.videoWithHighestQuality;
@@ -35,7 +34,7 @@ class NewPipeService {
     return url;
   }
 
-  /// চ্যানেলের ভিডিও তালিকা
+  /// চ্যানেলের ভিডিও
   Future<List<VideoItem>> getChannelVideos(String channelUrl) async {
     final result = await ChannelExtractor.getChannelUploads(channelUrl);
     return result.items.map(_toVideo).toList();
@@ -47,25 +46,30 @@ class NewPipeService {
     return VideoItem(
       id: id,
       title: item.name ?? '',
-      thumbnailUrl: _extractThumbnail(item), // 🔧 পরিবর্তিত অংশ
+      thumbnailUrl: _extractThumbnail(item),
       uploader: item.uploaderName ?? '',
       url: 'https://www.youtube.com/watch?v=$id',
-      duration: item.duration,
+      duration: _toDuration(item.duration),
       viewCount: item.viewCount,
     );
   }
 
-  /// StreamInfoItem থেকে থাম্বনেইল URL নিরাপদে বের করুন
+  /// int (seconds) → Duration? convert
+  Duration? _toDuration(dynamic value) {
+    if (value == null) return null;
+    if (value is Duration) return value;
+    if (value is int) return Duration(seconds: value);
+    return null;
+  }
+
+  /// StreamInfoItem থেকে thumbnail URL
   String _extractThumbnail(dynamic item) {
     try {
-      // thumbnails হলো List<String>, তাই প্রথম আইটেমটি ব্যবহার করতে হবে
       final thumbs = item.thumbnails;
       if (thumbs != null && thumbs is List && thumbs.isNotEmpty) {
         return thumbs.first.toString();
       }
-    } catch (_) {
-      // কোনো কারণে ব্যর্থ হলে খালি স্ট্রিং রিটার্ন করবে
-    }
+    } catch (_) {}
     return '';
   }
 }
