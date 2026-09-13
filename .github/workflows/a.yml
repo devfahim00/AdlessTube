@@ -1,0 +1,40 @@
+name: Create Flutter Project
+
+on:
+  workflow_dispatch:  # Manual trigger (Actions tab থেকে চালাবেন)
+
+jobs:
+  create-flutter-app:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write  # push করার permission
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: 'stable'
+          cache: true
+
+      - name: Verify Flutter
+        run: flutter --version
+
+      - name: Create Flutter project in root
+        run: flutter create . --project-name adlesstube --org com.example
+
+      - name: Commit and push
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add -A
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore: create flutter project adlesstube"
+            git push
+          fi
