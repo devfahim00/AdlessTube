@@ -1,0 +1,57 @@
+name: Build Flutter APK
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:  # Manual trigger
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: 'stable'
+          cache: true
+
+      - name: Verify Flutter
+        run: flutter --version
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Analyze project
+        run: flutter analyze
+        continue-on-error: true  # Analyze fail হলেও build চলবে
+
+      - name: Build APK (release)
+        run: flutter build apk --release --split-per-abi
+
+      - name: Build APK (universal - সব ডিভাইসে চলবে)
+        run: flutter build apk --release
+
+      - name: Upload split APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-apk-split
+          path: build/app/outputs/flutter-apk/app-*-release.apk
+
+      - name: Upload universal APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-apk-universal
+          path: build/app/outputs/flutter-apk/app-release.apk
