@@ -1,21 +1,32 @@
 name: adlesstube
-description: An ad-free YouTube client built with Flutter.
+description: "An ad-free YouTube client built with Flutter and NewPipe Extractor."
 publish_to: 'none'
 version: 1.0.0+1
 
 environment:
-  sdk: '>=3.0.0 <4.0.0'
+  sdk: '>=3.3.0 <4.0.0'
+  flutter: '>=3.24.0'
 
 dependencies:
   flutter:
     sdk: flutter
+
+  # NewPipe Extractor (YouTube data scraping)
   newpipeextractor_dart: ^2.0.2
+
+  # Video playback (libmpv based, better YouTube support than video_player)
   media_kit: ^1.1.10
   media_kit_video: ^1.2.4
   media_kit_libs_video: ^1.0.4
+
+  # Local storage
   hive: ^2.2.3
   hive_flutter: ^1.1.0
+
+  # State management
   provider: ^6.1.2
+
+  # UI helpers
   cached_network_image: ^3.3.1
   cupertino_icons: ^1.0.6
 
@@ -23,6 +34,11 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^3.0.0
+
+# ⚠️ এটা main fix — package_info_plus 9.x আপনার Gradle-এ fail করছিল
+# 7.0.0 stable এবং media_kit-এর সাথে compatible
+dependency_overrides:
+  package_info_plus: 7.0.0
 
 flutter:
   uses-material-design: true
