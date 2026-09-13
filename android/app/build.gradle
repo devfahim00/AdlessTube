@@ -12,6 +12,8 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        // ⬇️ এই লাইন যোগ করুন — Java 8+ API desugaring
+        coreLibraryDesugaringEnabled = true
     }
 
     kotlinOptions {
@@ -24,6 +26,9 @@ android {
         targetSdk = 36
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+
+        // Optional — multiDex সাপোর্ট (বড় প্রজেক্টের জন্য ভালো)
+        multiDexEnabled = true
     }
 
     buildTypes {
@@ -37,4 +42,9 @@ android {
 
 flutter {
     source = "../.."
+}
+
+// ⬇️ এই block-টা file-এর শেষে যোগ করুন (android {} block-এর বাইরে)
+dependencies {
+    coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.4"
 }
