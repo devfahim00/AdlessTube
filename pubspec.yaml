@@ -38,7 +38,7 @@ dev_dependencies:
 # ⚠️ এটা main fix — package_info_plus 9.x আপনার Gradle-এ fail করছিল
 # 7.0.0 stable এবং media_kit-এর সাথে compatible
 dependency_overrides:
-  package_info_plus: 7.0.0
+  package_info_plus: 8.0.2
 
 flutter:
   uses-material-design: true
