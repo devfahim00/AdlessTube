@@ -8,6 +8,7 @@ class VideoItem {
   final Duration? duration;
   final int? viewCount;
   final bool isLive;
+  final bool isShort;
 
   VideoItem({
     required this.id,
@@ -19,6 +20,7 @@ class VideoItem {
     this.duration,
     this.viewCount,
     this.isLive = false,
+    this.isShort = false,
   });
 
   Map<String, dynamic> toMap() => {
@@ -30,6 +32,7 @@ class VideoItem {
         'url': url,
         'durationSeconds': duration?.inSeconds,
         'isLive': isLive,
+        'isShort': isShort,
       };
 
   factory VideoItem.fromMap(Map map) => VideoItem(
@@ -43,6 +46,7 @@ class VideoItem {
         ? Duration(seconds: map['durationSeconds'] as int)
         : null,
     isLive: map['isLive'] ?? false,
+    isShort: map['isShort'] ?? false,
       );
 }
 

@@ -317,6 +317,10 @@ class NewPipeService {
     final duration = _toDuration(item.duration);
     final title = (item.name ?? '').toString();
     final isLive = _detectLive(title, duration);
+    final itemUrl = (item.url ?? '').toString().toLowerCase();
+    final isShort = item.isShort == true ||
+        itemUrl.contains('/shorts/') ||
+        RegExp(r'(^|\s)#shorts\b', caseSensitive: false).hasMatch(title);
 
     return VideoItem(
       id: id,
@@ -328,6 +332,7 @@ class NewPipeService {
       duration: duration,
       viewCount: item.viewCount,
       isLive: isLive,
+      isShort: isShort,
     );
   }
 

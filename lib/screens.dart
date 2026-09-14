@@ -226,14 +226,15 @@ class _HomeScreenState extends State<HomeScreen> {
       final Set<String> seen = {};
       final merged = <VideoItem>[];
       for (final v in [...subFeed, ...trending]) {
-        if (!seen.contains(v.id) && !v.isLive) {
+        if (!seen.contains(v.id) && !v.isLive && !v.isShort) {
           seen.add(v.id);
           merged.add(v);
         }
       }
 
       setState(() {
-        _subscribedFeed = subFeed.where((v) => !v.isLive).toList();
+        _subscribedFeed =
+            subFeed.where((v) => !v.isLive && !v.isShort).toList();
         _feed = merged;
       });
     } catch (e) {
