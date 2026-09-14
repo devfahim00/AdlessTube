@@ -42,11 +42,26 @@ class VideoItem {
       );
 }
 
-/// Player এ quality select করার জন্য
+class ChannelItem {
+  final String url;
+  final String name;
+  final String thumbnailUrl;
+  final int? subscriberCount;
+  final String description;
+
+  ChannelItem({
+    required this.url,
+    required this.name,
+    this.thumbnailUrl = '',
+    this.subscriberCount,
+    this.description = '',
+  });
+}
+
 class VideoStreamInfo {
   final String url;
-  final String quality; // e.g. "720p", "1080p", "480p"
-  final String format; // "muxed" / "video" / "audio"
+  final String quality;
+  final String format;
 
   VideoStreamInfo({
     required this.url,
