@@ -1,6 +1,11 @@
+import 'dart:async';
+import 'dart:io';
+
+import 'package:android_pip/android_pip.dart';
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
+import 'package:newpipeextractor_dart/newpipeextractor_dart.dart';
 import 'package:provider/provider.dart';
 import 'models.dart';
 import 'newpipe_service.dart';
@@ -291,7 +296,11 @@ class _SearchScreenState extends State<SearchScreen>
 
   List<VideoItem> _videos = [];
   List<ChannelItem> _channels = [];
+  PageToken? _videoNext;
+  PageToken? _channelNext;
   bool _loading = false;
+  bool _loadingMoreVideos = false;
+  bool _loadingMoreChannels = false;
   String? _error;
   String _lastQuery = '';
 
@@ -317,17 +326,62 @@ class _SearchScreenState extends State<SearchScreen>
       _lastQuery = q;
     });
     try {
-      final vids = await _service.searchVideos(q);
-      final chans = await _service.searchChannels(q);
+      final vids = await _service.searchVideoPage(q);
+      final chans = await _service.searchChannelPage(q);
       setState(() {
-        _videos = vids;
-        _channels = chans;
+        _videos = vids.items;
+        _channels = chans.items;
+        _videoNext = vids.next;
+        _channelNext = chans.next;
       });
     } catch (e) {
       setState(() => _error = e.toString());
     } finally {
       setState(() => _loading = false);
     }
+  }
+
+  Future<void> _loadMoreVideos() async {
+    if (_loadingMoreVideos || _videoNext == null || _lastQuery.isEmpty) return;
+    setState(() => _loadingMoreVideos = true);
+    try {
+      final page = await _service.searchVideoPage(_lastQuery, next: _videoNext);
+      if (mounted) {
+        setState(() {
+          _videos.addAll(page.items);
+          _videoNext = page.next;
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _loadingMoreVideos = false);
+    }
+  }
+
+  Future<void> _loadMoreChannels() async {
+    if (_loadingMoreChannels || _channelNext == null || _lastQuery.isEmpty) return;
+    setState(() => _loadingMoreChannels = true);
+    try {
+      final page = await _service.searchChannelPage(
+        _lastQuery,
+        next: _channelNext,
+      );
+      if (mounted) {
+        setState(() {
+          _channels.addAll(page.items);
+          _channelNext = page.next;
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _loadingMoreChannels = false);
+    }
+  }
+
+  bool _loadOnScroll(
+    ScrollNotification notification,
+    Future<void> Function() load,
+  ) {
+    if (notification.metrics.extentAfter < 300) unawaited(load());
+    return false;
   }
 
   @override
@@ -368,39 +422,67 @@ class _SearchScreenState extends State<SearchScreen>
                       children: [
                         _videos.isEmpty
                             ? const Center(child: Text('No videos'))
-                            : ListView.builder(
-                                itemCount: _videos.length,
-                                itemBuilder: (_, i) => VideoTile(
-                                  video: _videos[i],
-                                  onTap: () async {
-                                    final storage =
-                                        context.read<StorageService>();
-                                    await storage.addToHistory(_videos[i]);
-                                    if (context.mounted) {
-                                      Navigator.push(
-                                        context,
-                                        MaterialPageRoute(
-                                          builder: (_) => PlayerScreen(
-                                              video: _videos[i]),
-                                        ),
+                            : NotificationListener<ScrollNotification>(
+                                onNotification: (n) =>
+                                    _loadOnScroll(n, _loadMoreVideos),
+                                child: ListView.builder(
+                                  itemCount: _videos.length +
+                                      (_videoNext == null ? 0 : 1),
+                                  itemBuilder: (_, i) {
+                                    if (i == _videos.length) {
+                                      return const Padding(
+                                        padding: EdgeInsets.all(16),
+                                        child: Center(
+                                            child: CircularProgressIndicator()),
                                       );
                                     }
+                                    return VideoTile(
+                                      video: _videos[i],
+                                      onTap: () async {
+                                        final storage =
+                                            context.read<StorageService>();
+                                        await storage.addToHistory(_videos[i]);
+                                        if (context.mounted) {
+                                          Navigator.push(
+                                            context,
+                                            MaterialPageRoute(
+                                              builder: (_) => PlayerScreen(
+                                                  video: _videos[i]),
+                                            ),
+                                          );
+                                        }
+                                      },
+                                    );
                                   },
                                 ),
                               ),
                         _channels.isEmpty
                             ? const Center(child: Text('No channels'))
-                            : ListView.builder(
-                                itemCount: _channels.length,
-                                itemBuilder: (_, i) => ChannelTile(
-                                  channel: _channels[i],
-                                  onTap: () => Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (_) => ChannelScreen(
-                                          channel: _channels[i]),
-                                    ),
-                                  ),
+                            : NotificationListener<ScrollNotification>(
+                                onNotification: (n) =>
+                                    _loadOnScroll(n, _loadMoreChannels),
+                                child: ListView.builder(
+                                  itemCount: _channels.length +
+                                      (_channelNext == null ? 0 : 1),
+                                  itemBuilder: (_, i) {
+                                    if (i == _channels.length) {
+                                      return const Padding(
+                                        padding: EdgeInsets.all(16),
+                                        child: Center(
+                                            child: CircularProgressIndicator()),
+                                      );
+                                    }
+                                    return ChannelTile(
+                                      channel: _channels[i],
+                                      onTap: () => Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (_) => ChannelScreen(
+                                              channel: _channels[i]),
+                                        ),
+                                      ),
+                                    );
+                                  },
                                 ),
                               ),
                       ],
@@ -418,16 +500,30 @@ class ChannelScreen extends StatefulWidget {
   State<ChannelScreen> createState() => _ChannelScreenState();
 }
 
-class _ChannelScreenState extends State<ChannelScreen> {
+class _ChannelScreenState extends State<ChannelScreen>
+    with SingleTickerProviderStateMixin {
   final _service = NewPipeService();
   List<VideoItem> _videos = [];
+  List<VideoItem> _shorts = [];
+  PageToken? _videosNext;
+  PageToken? _shortsNext;
+  late final TabController _tab;
   bool _loading = true;
+  bool _loadingMoreVideos = false;
+  bool _loadingMoreShorts = false;
   String? _error;
 
   @override
   void initState() {
     super.initState();
+    _tab = TabController(length: 2, vsync: this);
     _load();
+  }
+
+  @override
+  void dispose() {
+    _tab.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -436,13 +532,86 @@ class _ChannelScreenState extends State<ChannelScreen> {
       _error = null;
     });
     try {
-      final vids = await _service.getChannelVideos(widget.channel.url);
-      setState(() => _videos = vids);
+      final pages = await Future.wait([
+        _service.getChannelTabPage(widget.channel.url, 'videos'),
+        _service.getChannelTabPage(widget.channel.url, 'shorts'),
+      ]);
+      setState(() {
+        _videos = pages[0].items;
+        _videosNext = pages[0].next;
+        _shorts = pages[1].items;
+        _shortsNext = pages[1].next;
+      });
     } catch (e) {
       setState(() => _error = e.toString());
     } finally {
       setState(() => _loading = false);
     }
+  }
+
+  Future<void> _loadMore(String tab) async {
+    final isVideos = tab == 'videos';
+    final next = isVideos ? _videosNext : _shortsNext;
+    final loading = isVideos ? _loadingMoreVideos : _loadingMoreShorts;
+    if (loading || next == null) return;
+    setState(() {
+      if (isVideos) _loadingMoreVideos = true;
+      else _loadingMoreShorts = true;
+    });
+    try {
+      final page = await _service.getChannelTabPage(
+        widget.channel.url, tab, next: next);
+      if (!mounted) return;
+      setState(() {
+        if (isVideos) {
+          _videos.addAll(page.items);
+          _videosNext = page.next;
+        } else {
+          _shorts.addAll(page.items);
+          _shortsNext = page.next;
+        }
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          if (isVideos) _loadingMoreVideos = false;
+          else _loadingMoreShorts = false;
+        });
+      }
+    }
+  }
+
+  Widget _tabList(List<VideoItem> items, PageToken? next, String tab) {
+    return NotificationListener<ScrollNotification>(
+      onNotification: (notification) {
+        if (notification.metrics.extentAfter < 300) unawaited(_loadMore(tab));
+        return false;
+      },
+      child: ListView.builder(
+        itemCount: items.length + (next == null ? 0 : 1),
+        itemBuilder: (_, i) {
+          if (i == items.length) {
+            return const Padding(
+              padding: EdgeInsets.all(16),
+              child: Center(child: CircularProgressIndicator()),
+            );
+          }
+          return VideoTile(
+            video: items[i],
+            onTap: () async {
+              final storage = context.read<StorageService>();
+              await storage.addToHistory(items[i]);
+              if (context.mounted) {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => PlayerScreen(video: items[i])),
+                );
+              }
+            },
+          );
+        },
+      ),
+    );
   }
 
   @override
@@ -502,48 +671,22 @@ class _ChannelScreenState extends State<ChannelScreen> {
             thumbnail: widget.channel.thumbnailUrl,
           ),
           const Divider(),
+          TabBar(
+            controller: _tab,
+            tabs: const [Tab(text: 'Videos'), Tab(text: 'Shorts')],
+          ),
           Expanded(
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
                 : _error != null
                     ? ErrorView(message: _error!, onRetry: _load)
-                    : _videos.isEmpty
-                        ? Center(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                const Icon(Icons.video_library_outlined,
-                                    size: 60, color: Colors.grey),
-                                const SizedBox(height: 12),
-                                const Text('No videos found'),
-                                const SizedBox(height: 12),
-                                ElevatedButton(
-                                  onPressed: _load,
-                                  child: const Text('Retry'),
-                                ),
-                              ],
-                            ),
-                          )
-                        : ListView.builder(
-                            itemCount: _videos.length,
-                            itemBuilder: (_, i) => VideoTile(
-                              video: _videos[i],
-                              onTap: () async {
-                                final storage =
-                                    context.read<StorageService>();
-                                await storage.addToHistory(_videos[i]);
-                                if (context.mounted) {
-                                  Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (_) =>
-                                          PlayerScreen(video: _videos[i]),
-                                    ),
-                                  );
-                                }
-                              },
-                            ),
-                          ),
+                    : TabBarView(
+                        controller: _tab,
+                        children: [
+                          _tabList(_videos, _videosNext, 'videos'),
+                          _tabList(_shorts, _shortsNext, 'shorts'),
+                        ],
+                      ),
           ),
         ],
       ),
@@ -573,6 +716,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   VideoStreamInfo? _currentStream;
   List<VideoItem> _related = [];
   bool _loadingRelated = false;
+  Duration _lastSavedPosition = Duration.zero;
 
   @override
   void initState() {
@@ -583,6 +727,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _player.stream.playing.listen((playing) {
       if (mounted) setState(() => _isPlaying = playing);
     });
+    _player.stream.position.listen((position) {
+      if ((position - _lastSavedPosition).inSeconds >= 5) {
+        _savePlaybackState(position);
+      }
+    });
+
+    if (Platform.isAndroid) unawaited(_enableAutoPip());
 
     _loadStreams();
     _loadRelated();
@@ -602,9 +753,21 @@ class _PlayerScreenState extends State<PlayerScreen> {
         });
         return;
       }
+      final saved = context.read<StorageService>().getPlaybackState(widget.video.id);
+      final savedQuality = saved?['quality'];
+      final savedFormat = saved?['format'];
+      final savedPosition = Duration(
+        milliseconds: (saved?['positionMs'] as int?) ?? 0,
+      );
       _streams = streams;
       _currentStream = streams.first;
-      await _openStream(_currentStream!);
+      for (final stream in streams) {
+        if (stream.quality == savedQuality && stream.format == savedFormat) {
+          _currentStream = stream;
+          break;
+        }
+      }
+      await _openStream(_currentStream!, start: savedPosition);
       await _player.play();
       setState(() => _loading = false);
     } catch (e) {
@@ -626,20 +789,43 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   Future<void> _changeQuality(VideoStreamInfo stream) async {
     final wasPlaying = _isPlaying;
-    await _openStream(stream);
+    final position = _player.state.position;
+    await _openStream(stream, start: position);
     if (wasPlaying) {
       await _player.play();
     } else {
       await _player.pause();
     }
     setState(() => _currentStream = stream);
+    _savePlaybackState(position);
   }
 
-  Future<void> _openStream(VideoStreamInfo stream) async {
-    await _player.open(Media(stream.url));
+  Future<void> _enableAutoPip() async {
+    try {
+      await AndroidPIP().setAutoPipMode();
+    } catch (_) {
+      // Auto-PiP requires Android 12; the PiP button remains available.
+    }
+  }
+
+  Future<void> _openStream(VideoStreamInfo stream, {Duration? start}) async {
+    await _player.open(Media(stream.url, start: start));
     if (stream.audioUrl != null) {
       await _player.setAudioTrack(AudioTrack.uri(stream.audioUrl!));
     }
+  }
+
+  void _savePlaybackState([Duration? position]) {
+    final stream = _currentStream;
+    if (stream == null) return;
+    final currentPosition = position ?? _player.state.position;
+    _lastSavedPosition = currentPosition;
+    unawaited(context.read<StorageService>().savePlaybackState(
+          videoId: widget.video.id,
+          position: currentPosition,
+          quality: stream.quality,
+          format: stream.format,
+        ));
   }
 
   void _openRelated(VideoItem v) async {
@@ -654,6 +840,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   @override
   void dispose() {
+    _savePlaybackState();
     _player.dispose();
     super.dispose();
   }
@@ -668,6 +855,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
         title: Text(widget.video.title,
             maxLines: 1, overflow: TextOverflow.ellipsis),
         actions: [
+          if (Platform.isAndroid)
+            IconButton(
+              icon: const Icon(Icons.picture_in_picture_alt),
+              tooltip: 'Picture in Picture',
+              onPressed: () async {
+                try {
+                  await AndroidPIP().enterPipMode();
+                } catch (_) {}
+              },
+            ),
           if (_currentStream != null)
             PopupMenuButton<VideoStreamInfo>(
               icon: const Icon(Icons.high_quality),

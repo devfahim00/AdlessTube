@@ -6,6 +6,7 @@ class StorageService extends ChangeNotifier {
   static const _historyBox = 'history';
   static const _subscriptionsBox = 'subscriptions';
   static const _settingsBox = 'settings';
+  static const _playbackBox = 'playback';
   static const _regionKey = 'region_code';
   static const _regionSelectedKey = 'region_selected';
 
@@ -14,6 +15,7 @@ class StorageService extends ChangeNotifier {
     await Hive.openBox(_historyBox);
     await Hive.openBox(_subscriptionsBox);
     await Hive.openBox(_settingsBox);
+    await Hive.openBox(_playbackBox);
   }
 
   // ─────────── Region ───────────
@@ -47,6 +49,24 @@ class StorageService extends ChangeNotifier {
   Future<void> clearHistory() async {
     await Hive.box(_historyBox).clear();
     notifyListeners();
+  }
+
+  Map<String, dynamic>? getPlaybackState(String videoId) {
+    final value = Hive.box(_playbackBox).get(videoId);
+    return value is Map ? Map<String, dynamic>.from(value) : null;
+  }
+
+  Future<void> savePlaybackState({
+    required String videoId,
+    required Duration position,
+    required String quality,
+    required String format,
+  }) {
+    return Hive.box(_playbackBox).put(videoId, {
+      'positionMs': position.inMilliseconds,
+      'quality': quality,
+      'format': format,
+    });
   }
 
   // ─────────── Subscriptions ───────────

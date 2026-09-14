@@ -22,6 +22,36 @@ class NewPipeService {
     return channels.map(_toChannel).toList();
   }
 
+  Future<({List<VideoItem> items, PageToken? next})> searchVideoPage(
+    String query, {
+    PageToken? next,
+  }) async {
+    final page = next == null
+        ? await SearchExtractor.searchYoutube(
+            query, [SearchFilter.videos.value])
+        : await SearchExtractor.searchNextPage(
+            query, [SearchFilter.videos.value], next);
+    return (
+      items: page.result.videos.map(_toVideo).where(_isPlayable).toList(),
+      next: page.next,
+    );
+  }
+
+  Future<({List<ChannelItem> items, PageToken? next})> searchChannelPage(
+    String query, {
+    PageToken? next,
+  }) async {
+    final page = next == null
+        ? await SearchExtractor.searchYoutube(
+            query, [SearchFilter.channels.value])
+        : await SearchExtractor.searchNextPage(
+            query, [SearchFilter.channels.value], next);
+    return (
+      items: page.result.channels.map(_toChannel).toList(),
+      next: page.next,
+    );
+  }
+
   // ═══════════════════ TRENDING ═══════════════════
 
   Future<List<VideoItem>> getTrending({String region = 'US'}) async {
@@ -66,6 +96,40 @@ class NewPipeService {
     } catch (_) {
       return [];
     }
+  }
+
+  Future<({List<VideoItem> items, PageToken? next})> getChannelTabPage(
+    String channelUrl,
+    String tab, {
+    PageToken? next,
+  }) async {
+    if (tab == 'videos') {
+      try {
+        final page = next == null
+            ? await ChannelExtractor.getChannelTabContent(channelUrl, tab)
+            : await ChannelExtractor.getChannelTabNextPage(
+                channelUrl, tab, next);
+        return (
+          items: page.streams.map(_toVideo).where(_isPlayable).toList(),
+          next: page.next,
+        );
+      } catch (_) {
+        final page = next == null
+            ? await ChannelExtractor.getChannelUploads(channelUrl)
+            : await ChannelExtractor.getChannelNextPage(channelUrl, next);
+        return (
+          items: page.items.map(_toVideo).where(_isPlayable).toList(),
+          next: page.next,
+        );
+      }
+    }
+    final page = next == null
+        ? await ChannelExtractor.getChannelTabContent(channelUrl, tab)
+        : await ChannelExtractor.getChannelTabNextPage(channelUrl, tab, next);
+    return (
+      items: page.streams.map(_toVideo).where(_isPlayable).toList(),
+      next: page.next,
+    );
   }
 
   // ═══════════════════ RELATED ═══════════════════
