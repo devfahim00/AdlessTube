@@ -28,6 +28,7 @@ class VideoItem {
         'uploader': uploader,
         'uploaderUrl': uploaderUrl,
         'url': url,
+        'durationSeconds': duration?.inSeconds,
         'isLive': isLive,
       };
 
@@ -37,8 +38,11 @@ class VideoItem {
         thumbnailUrl: map['thumbnailUrl'] ?? '',
         uploader: map['uploader'] ?? '',
         uploaderUrl: map['uploaderUrl'] ?? '',
-        url: map['url'] ?? '',
-        isLive: map['isLive'] ?? false,
+    url: map['url'] ?? '',
+    duration: map['durationSeconds'] is int
+        ? Duration(seconds: map['durationSeconds'] as int)
+        : null,
+    isLive: map['isLive'] ?? false,
       );
 }
 

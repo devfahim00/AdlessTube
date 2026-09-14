@@ -20,20 +20,47 @@ class VideoTile extends StatelessWidget {
           children: [
             ClipRRect(
               borderRadius: BorderRadius.circular(8),
-              child: CachedNetworkImage(
-                imageUrl: video.thumbnailUrl,
-                width: 140,
-                height: 80,
-                fit: BoxFit.cover,
-                placeholder: (_, __) =>
-                    Container(width: 140, height: 80, color: Colors.grey[800]),
-                errorWidget: (_, __, ___) => Container(
-                  width: 140,
-                  height: 80,
-                  color: Colors.grey[800],
-                  child: const Icon(Icons.broken_image),
-                ),
+              child: Stack(
+                children: [
+                  CachedNetworkImage(
+                    imageUrl: video.thumbnailUrl,
+                    width: 140,
+                    height: 80,
+                    fit: BoxFit.cover,
+                    placeholder: (_, __) => Container(
+                        width: 140, height: 80, color: Colors.grey[800]),
+                    errorWidget: (_, __, ___) => Container(
+                      width: 140,
+                      height: 80,
+                      color: Colors.grey[800],
+                      child: const Icon(Icons.broken_image),
+                    ),
+                  ),
+                  if (video.duration != null)
+                    Positioned(
+                      right: 5,
+                      bottom: 5,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.8),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 4, vertical: 2),
+                          child: Text(
+                            _formatDuration(video.duration!),
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
               ),
+            ),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -59,6 +86,15 @@ class VideoTile extends StatelessWidget {
       ),
     );
   }
+}
+
+String _formatDuration(Duration duration) {
+  final minutes = duration.inMinutes;
+  final seconds = duration.inSeconds.remainder(60).toString().padLeft(2, '0');
+  if (minutes >= 60) {
+    return '${minutes ~/ 60}:${(minutes % 60).toString().padLeft(2, '0')}:$seconds';
+  }
+  return '$minutes:$seconds';
 }
 
 class ChannelTile extends StatelessWidget {
