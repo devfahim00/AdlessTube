@@ -58,20 +58,14 @@ class ChannelItem {
   });
 }
 
-/// Player এ quality select করার জন্য।
-/// `audioUrl` না থাকলে muxed, থাকলে video-only + audio merge।
 class VideoStreamInfo {
   final String url;
   final String quality;
-  final String format; // "muxed" / "video-only"
-  final String? audioUrl; // video-only হলে audio merge এর জন্য
+  final String format;
 
   VideoStreamInfo({
     required this.url,
     required this.quality,
     required this.format,
-    this.audioUrl,
   });
-
-  bool get needsAudioMerge => format == 'video-only' && audioUrl != null;
 }
