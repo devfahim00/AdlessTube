@@ -93,7 +93,8 @@ class _AdlessAudioHandler extends BaseAudioHandler
 class MusicPlaybackService extends ChangeNotifier {
   final NewPipeService _service = NewPipeService();
   final StorageService _storage;
-  final _AdlessAudioHandler _handler;
+  _AdlessAudioHandler? _handler;
+  Future<void>? _initializing;
 
   VideoItem? _song;
   bool _playing = false;
@@ -103,53 +104,79 @@ class MusicPlaybackService extends ChangeNotifier {
   int _queueIndex = -1;
   bool _handlingCompletion = false;
 
-  MusicPlaybackService._(this._storage, this._handler) {
-    _handler.onNext = next;
-    _handler.onPrevious = previous;
-    _handler.playbackState.listen((state) {
-      _playing = state.playing;
-      if (state.processingState == AudioProcessingState.completed &&
-          _storage.musicAutoplay &&
-          !_handlingCompletion) {
-        _handlingCompletion = true;
-        unawaited(next().whenComplete(() => _handlingCompletion = false));
-      }
-      notifyListeners();
-    });
-    _handler.customEvent.listen((event) {
-      if (event is Map && event['type'] == 'favorite' && _song != null) {
-        unawaited(_storage.toggleLikedSong(_song!));
-      }
-    });
+  MusicPlaybackService(this._storage);
+
+  Future<void> _initialize() {
+    return _initializing ??= _startAudioService();
   }
 
-  static Future<MusicPlaybackService> create(StorageService storage) async {
+  Future<void> _startAudioService() async {
     _AdlessAudioHandler? localHandler;
-    await AudioService.init(
-      builder: () {
-        localHandler = _AdlessAudioHandler();
-        return localHandler!;
-      },
-      config: const AudioServiceConfig(
-        androidNotificationChannelId: 'com.devfahim00.tube.music',
-        androidNotificationChannelName: 'AdlessTube Music',
-        androidNotificationOngoing: true,
-      ),
-    );
-    return MusicPlaybackService._(storage, localHandler!);
+    try {
+      await AudioService.init(
+        builder: () {
+          localHandler = _AdlessAudioHandler();
+          return localHandler!;
+        },
+        config: const AudioServiceConfig(
+          androidNotificationChannelId: 'com.devfahim00.tube.music',
+          androidNotificationChannelName: 'AdlessTube Music',
+          androidNotificationOngoing: true,
+        ),
+      ).timeout(const Duration(seconds: 12));
+      final handler = localHandler;
+      if (handler == null) throw StateError('Music service could not start.');
+      _handler = handler;
+      handler.onNext = next;
+      handler.onPrevious = previous;
+      handler.playbackState.listen((state) {
+        _playing = state.playing;
+        if (state.processingState == AudioProcessingState.completed &&
+            _storage.musicAutoplay &&
+            !_handlingCompletion) {
+          _handlingCompletion = true;
+          unawaited(next().whenComplete(() => _handlingCompletion = false));
+        }
+        notifyListeners();
+      });
+      handler.customEvent.listen((event) {
+        if (event is Map && event['type'] == 'favorite' && _song != null) {
+          unawaited(_storage.toggleLikedSong(_song!));
+        }
+      });
+    } catch (e) {
+      _error = 'Music service could not start: $e';
+      notifyListeners();
+      rethrow;
+    }
+  }
+
+  Future<_AdlessAudioHandler> _getHandler() async {
+    await _initialize();
+    final handler = _handler;
+    if (handler == null) throw StateError('Music service is unavailable.');
+    return handler;
   }
 
   VideoItem? get song => _song;
   bool get isPlaying => _playing;
   bool get isLoading => _loading;
   String? get error => _error;
-  Stream<Duration> get positionStream => _handler.positionStream;
-  Duration get duration => _handler.duration;
+  Stream<Duration> get positionStream =>
+      _handler?.positionStream ?? Stream.value(Duration.zero);
+  Duration get duration => _handler?.duration ?? Duration.zero;
   bool get canGoNext => _queueIndex >= 0 && _queueIndex < _queue.length - 1;
   bool get canGoPrevious => _queueIndex > 0;
 
-  Future<void> playOrPause() => _playing ? _handler.pause() : _handler.play();
-  Future<void> seek(Duration position) => _handler.seek(position);
+  Future<void> playOrPause() async {
+    final handler = await _getHandler();
+    await (_playing ? handler.pause() : handler.play());
+  }
+
+  Future<void> seek(Duration position) async {
+    final handler = await _getHandler();
+    await handler.seek(position);
+  }
 
   void setQueue(List<VideoItem> songs, VideoItem selected) {
     _queue = songs.where((song) => !song.isLive && !song.isShort).toList();
@@ -162,18 +189,19 @@ class MusicPlaybackService extends ChangeNotifier {
 
   Future<void> play(VideoItem nextSong, {List<VideoItem>? queue}) async {
     if (queue != null) setQueue(queue, nextSong);
-    if (_song?.id == nextSong.id && _error == null) {
-      await _handler.play();
-      return;
-    }
     _loading = true;
     _error = null;
     notifyListeners();
     try {
+      final handler = await _getHandler();
+      if (_song?.id == nextSong.id) {
+        await handler.play();
+        return;
+      }
       final audio = await _service.getBestAudioStream(nextSong.url);
       if (audio == null) throw Exception('No audio stream found for this song.');
       _song = nextSong;
-      await _handler.load(
+      await handler.load(
         MediaItem(
           id: nextSong.id,
           title: nextSong.title,
@@ -184,7 +212,7 @@ class MusicPlaybackService extends ChangeNotifier {
         ),
         Uri.parse(audio.url),
       );
-      await _handler.play();
+      await handler.play();
     } catch (e) {
       _error = e.toString();
       _song = null;
@@ -223,7 +251,8 @@ class MusicPlaybackService extends ChangeNotifier {
   }
 
   Future<void> stop() async {
-    await _handler.stop();
+    final handler = _handler;
+    if (handler != null) await handler.stop();
     _song = null;
     _error = null;
     notifyListeners();

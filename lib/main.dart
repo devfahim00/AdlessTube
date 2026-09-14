@@ -12,7 +12,7 @@ void main() async {
 
   final storage = StorageService();
   await storage.init();
-  final music = await MusicPlaybackService.create(storage);
+  final music = MusicPlaybackService(storage);
 
   runApp(
     MultiProvider(
