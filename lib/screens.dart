@@ -1976,7 +1976,7 @@ class MenuScreen extends StatelessWidget {
           const Padding(
             padding: EdgeInsets.all(16),
             child: Text(
-              'AdlessTube v1.0.1\nAd-free YouTube client',
+              'AdlessTube v1.0.2\nAd-free YouTube client',
               style: TextStyle(color: Colors.grey, fontSize: 12),
               textAlign: TextAlign.center,
             ),
