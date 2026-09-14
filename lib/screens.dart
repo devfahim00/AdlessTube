@@ -27,6 +27,8 @@ class MainShell extends StatefulWidget {
 class _MainShellState extends State<MainShell> {
   int _index = 0;
   bool _checkedForUpdate = false;
+  final _homeScreen = const HomeScreen();
+  final _libraryScreen = const LibraryScreen();
 
   @override
   void didChangeDependencies() {
@@ -75,9 +77,9 @@ class _MainShellState extends State<MainShell> {
   @override
   Widget build(BuildContext context) {
     final page = switch (_index) {
-      0 => const HomeScreen(),
+      0 => _homeScreen,
       1 => const ShortsScreen(),
-      2 => const LibraryScreen(),
+      2 => _libraryScreen,
       _ => MenuScreen(
           onCheckForUpdate: () => _checkForUpdate(showUpToDate: true)),
     };
@@ -194,7 +196,6 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final _service = NewPipeService();
   List<VideoItem> _feed = [];
-  List<VideoItem> _subscribedFeed = [];
   bool _loading = true;
   String? _error;
 
@@ -223,24 +224,34 @@ class _HomeScreenState extends State<HomeScreen> {
         subFeed.addAll(vids.take(10));
       }
 
+      // Recent watches provide the closest available signal for a personal
+      // home feed. Keep this bounded so opening Home remains responsive.
+      final relatedFeed = <VideoItem>[];
+      for (final video in storage.getHistory().take(3)) {
+        try {
+          final related = await _service.getRelatedVideos(video.url);
+          relatedFeed.addAll(related.take(8));
+        } catch (_) {}
+      }
+
       final Set<String> seen = {};
       final merged = <VideoItem>[];
-      for (final v in [...subFeed, ...trending]) {
+      for (final v in [...subFeed, ...relatedFeed, ...trending]) {
         if (!seen.contains(v.id) && !v.isLive && !v.isShort) {
           seen.add(v.id);
           merged.add(v);
         }
       }
+      merged.shuffle();
 
+      if (!mounted) return;
       setState(() {
-        _subscribedFeed =
-            subFeed.where((v) => !v.isLive && !v.isShort).toList();
         _feed = merged;
       });
     } catch (e) {
-      setState(() => _error = e.toString());
+      if (mounted) setState(() => _error = e.toString());
     } finally {
-      setState(() => _loading = false);
+      if (mounted) setState(() => _loading = false);
     }
   }
 
@@ -285,18 +296,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   onRefresh: _load,
                   child: ListView(
                     children: [
-                      if (_subscribedFeed.isNotEmpty) ...[
-                        const _SectionHeader(
-                          title: 'From your subscriptions',
-                          icon: Icons.subscriptions,
-                        ),
-                        ..._subscribedFeed.map(_buildTile),
-                        const Divider(),
-                      ],
-                      _SectionHeader(
-                        title: 'Trending in ${RegionService.nameFor(region)}',
-                        icon: Icons.trending_up,
-                      ),
                       ..._feed.map(_buildTile),
                       const SizedBox(height: 80),
                     ],
@@ -775,7 +774,8 @@ class PlayerScreen extends StatefulWidget {
   State<PlayerScreen> createState() => _PlayerScreenState();
 }
 
-class _PlayerScreenState extends State<PlayerScreen> {
+class _PlayerScreenState extends State<PlayerScreen>
+    with WidgetsBindingObserver {
   late final Player _player;
   late final VideoController _controller;
   late final StorageService _storage;
@@ -799,8 +799,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _storage = context.read<StorageService>();
     _player = Player();
     _controller = VideoController(_player);
+    WidgetsBinding.instance.addObserver(this);
 
     _player.stream.playing.listen((playing) {
+      // Persist immediately when the user pauses, instead of waiting for the
+      // periodic position listener. This also covers an immediate app close.
+      if (!playing &&
+          !_loading &&
+          _player.state.position.inMilliseconds > 0) {
+        _savePlaybackState();
+      }
       if (mounted) setState(() => _isPlaying = playing);
     });
     _player.stream.position.listen((position) {
@@ -811,6 +819,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
     _loadStreams();
     _loadRelated();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      _savePlaybackState();
+    }
   }
 
   Future<void> _loadStreams() async {
@@ -935,6 +952,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _savePlaybackState();
     unawaited(_player.stop());
     unawaited(_player.dispose());

@@ -119,12 +119,14 @@ class NewPipeService {
     }
 
     final regionName = _regionToName(region);
+    // Always mix suggested shorts in, even when the user has subscriptions.
     for (final query in ['$regionName shorts', 'popular shorts $regionName']) {
       try {
         final page = await searchVideoPage(query);
         addAll(page.items);
       } catch (_) {}
     }
+    shorts.shuffle();
     return shorts;
   }
 
@@ -153,13 +155,18 @@ class NewPipeService {
         );
       }
     }
-    final page = next == null
-        ? await ChannelExtractor.getChannelTabContent(channelUrl, tab)
-        : await ChannelExtractor.getChannelTabNextPage(channelUrl, tab, next);
-    return (
-      items: page.streams.map(_toVideo).where(_isPlayable).toList(),
-      next: page.next,
-    );
+    try {
+      final page = next == null
+          ? await ChannelExtractor.getChannelTabContent(channelUrl, tab)
+          : await ChannelExtractor.getChannelTabNextPage(channelUrl, tab, next);
+      return (
+        items: page.streams.map(_toVideo).where(_isPlayable).toList(),
+        next: page.next,
+      );
+    } catch (_) {
+      // Many channels do not have a Shorts tab. Treat it as an empty list.
+      return (items: <VideoItem>[], next: null);
+    }
   }
 
   // ═══════════════════ RELATED ═══════════════════
@@ -363,6 +370,15 @@ class NewPipeService {
     if (value == null) return null;
     if (value is Duration) return value;
     if (value is int) return Duration(seconds: value);
+    if (value is String) {
+      final parts = value.split(':').map(int.tryParse).toList();
+      if (parts.isEmpty || parts.any((part) => part == null)) return null;
+      var seconds = 0;
+      for (final part in parts) {
+        seconds = seconds * 60 + part!;
+      }
+      return Duration(seconds: seconds);
+    }
     return null;
   }
 

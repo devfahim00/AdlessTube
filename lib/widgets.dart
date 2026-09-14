@@ -36,7 +36,8 @@ class VideoTile extends StatelessWidget {
                       child: const Icon(Icons.broken_image),
                     ),
                   ),
-                  if (video.duration != null)
+                  if (video.duration != null &&
+                      video.duration!.inSeconds > 0)
                     Positioned(
                       right: 5,
                       bottom: 5,
@@ -88,6 +89,7 @@ class VideoTile extends StatelessWidget {
 }
 
 String _formatDuration(Duration duration) {
+  if (duration.isNegative) return '';
   final minutes = duration.inMinutes;
   final seconds = duration.inSeconds.remainder(60).toString().padLeft(2, '0');
   if (minutes >= 60) {
