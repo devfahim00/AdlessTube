@@ -1282,6 +1282,65 @@ class _MusicScreenState extends State<MusicScreen> {
     }
   }
 
+  Future<void> _openSong(VideoItem song, List<VideoItem> queue) async {
+    final storage = context.read<StorageService>();
+    await storage.addToHistory(song);
+    if (!mounted) return;
+    context.read<MusicPlaybackService>().setQueue(queue, song);
+    await Navigator.push<void>(
+      context,
+      MaterialPageRoute(builder: (_) => MusicPlayerScreen(song: song)),
+    );
+  }
+
+  Future<void> _showFavorites() async {
+    final favorites = context.read<StorageService>().getLikedSongs();
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: SizedBox(
+          height: 420,
+          child: favorites.isEmpty
+              ? const Center(child: Text('No favourite songs yet'))
+              : Column(
+                  children: [
+                    const ListTile(
+                      leading: Icon(Icons.favorite, color: Colors.red),
+                      title: Text('Favourite songs'),
+                    ),
+                    Expanded(
+                      child: ListView.builder(
+                        itemCount: favorites.length,
+                        itemBuilder: (_, index) {
+                          final song = favorites[index];
+                          return ListTile(
+                            leading: const Icon(Icons.music_note),
+                            title: Text(
+                              song.title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            subtitle: Text(
+                              song.uploader,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            onTap: () {
+                              Navigator.of(sheetContext).pop();
+                              _openSong(song, favorites);
+                            },
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final storage = context.watch<StorageService>();
@@ -1291,9 +1350,25 @@ class _MusicScreenState extends State<MusicScreen> {
         title: const Text('Music'),
         actions: [
           IconButton(
+            onPressed: _showFavorites,
+            icon: const Icon(Icons.favorite_outline),
+            tooltip: 'Favourite songs',
+          ),
+          IconButton(
             onPressed: _load,
             icon: const Icon(Icons.refresh),
             tooltip: 'Refresh music',
+          ),
+          PopupMenuButton<bool>(
+            icon: const Icon(Icons.more_vert),
+            onSelected: storage.setMusicAutoplay,
+            itemBuilder: (_) => [
+              CheckedPopupMenuItem(
+                value: !storage.musicAutoplay,
+                checked: storage.musicAutoplay,
+                child: const Text('Autoplay related songs'),
+              ),
+            ],
           ),
         ],
       ),
@@ -1354,16 +1429,7 @@ class _MusicScreenState extends State<MusicScreen> {
                           ),
                           tooltip: liked ? 'Remove from liked songs' : 'Like song',
                         ),
-                        onTap: () async {
-                          await storage.addToHistory(song);
-                          if (!context.mounted) return;
-                          await Navigator.push<void>(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => MusicPlayerScreen(song: song),
-                            ),
-                          );
-                        },
+                        onTap: () => _openSong(song, _songs),
                       );
                     },
                   ),
@@ -1424,8 +1490,10 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final liked = context.watch<StorageService>().isSongLiked(widget.song.id);
+    final storage = context.watch<StorageService>();
     final music = context.watch<MusicPlaybackService>();
+    final currentSong = music.song ?? widget.song;
+    final liked = storage.isSongLiked(currentSong.id);
     final player = music.player;
     final navigator = Navigator.of(context);
     return PopScope(
@@ -1453,7 +1521,7 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen> {
                       children: [
                         ClipRRect(
                           borderRadius: BorderRadius.circular(16),
-                          child: widget.song.thumbnailUrl.isEmpty
+                          child: currentSong.thumbnailUrl.isEmpty
                               ? Container(
                                   width: 250,
                                   height: 250,
@@ -1463,7 +1531,7 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen> {
                                   child: const Icon(Icons.music_note, size: 72),
                                 )
                               : Image.network(
-                                  widget.song.thumbnailUrl,
+                                  currentSong.thumbnailUrl,
                                   width: 250,
                                   height: 250,
                                   fit: BoxFit.cover,
@@ -1479,14 +1547,14 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen> {
                         ),
                         const SizedBox(height: 28),
                         Text(
-                          widget.song.title,
+                          currentSong.title,
                           maxLines: 2,
                           textAlign: TextAlign.center,
                           overflow: TextOverflow.ellipsis,
                           style: Theme.of(context).textTheme.titleLarge,
                         ),
                         const SizedBox(height: 8),
-                        Text(widget.song.uploader),
+                        Text(currentSong.uploader),
                         const SizedBox(height: 18),
                         StreamBuilder<Duration>(
                           stream: player.stream.position,
@@ -1529,7 +1597,13 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen> {
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             IconButton(
-                              onPressed: () => _storage.toggleLikedSong(widget.song),
+                              onPressed:
+                                  music.canGoPrevious ? music.previous : null,
+                              icon: const Icon(Icons.skip_previous),
+                              tooltip: 'Previous song',
+                            ),
+                            IconButton(
+                              onPressed: () => _storage.toggleLikedSong(currentSong),
                               icon: Icon(
                                 liked ? Icons.favorite : Icons.favorite_border,
                                 color: liked ? Colors.red : null,
@@ -1546,7 +1620,14 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen> {
                                     : Icons.play_arrow,
                               ),
                             ),
-                            const SizedBox(width: 20),
+                            IconButton(
+                              onPressed: music.canGoNext ||
+                                      _storage.musicAutoplay
+                                  ? music.next
+                                  : null,
+                              icon: const Icon(Icons.skip_next),
+                              tooltip: 'Next song',
+                            ),
                             IconButton(
                               onPressed: _stopAndLeave,
                               icon: const Icon(Icons.stop),

@@ -17,7 +17,7 @@ void main() async {
     MultiProvider(
       providers: [
         ChangeNotifierProvider.value(value: storage),
-        ChangeNotifierProvider(create: (_) => MusicPlaybackService()),
+        ChangeNotifierProvider(create: (_) => MusicPlaybackService(storage)),
       ],
       child: const AdlessTubeApp(),
     ),
