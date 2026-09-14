@@ -8,7 +8,7 @@ import 'storage_service.dart';
 import 'widgets.dart';
 import 'region_service.dart';
 
-/// ═══════════════════════ MAIN SHELL (Bottom Pill Navbar) ═══════════════════════
+/// ═══════════════════════ MAIN SHELL ═══════════════════════
 class MainShell extends StatefulWidget {
   const MainShell({super.key});
 
@@ -146,10 +146,8 @@ class _HomeScreenState extends State<HomeScreen> {
       final storage = context.read<StorageService>();
       final region = storage.regionCode;
 
-      // Region-based trending
       final trending = await _service.getTrending(region: region);
 
-      // Subscribed channels এর video
       final subscribedUrls = storage.getSubscribedChannelUrls();
       final subFeed = <VideoItem>[];
       for (final url in subscribedUrls) {
@@ -157,7 +155,6 @@ class _HomeScreenState extends State<HomeScreen> {
         subFeed.addAll(vids.take(10));
       }
 
-      // Merge + dedupe
       final Set<String> seen = {};
       final merged = <VideoItem>[];
       for (final v in [...subFeed, ...trending]) {
@@ -278,7 +275,7 @@ class _SectionHeader extends StatelessWidget {
   }
 }
 
-/// ═══════════════════════ SEARCH (Video/Channel tabs) ═══════════════════════
+/// ═══════════════════════ SEARCH ═══════════════════════
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
 
@@ -454,7 +451,6 @@ class _ChannelScreenState extends State<ChannelScreen> {
       appBar: AppBar(title: Text(widget.channel.name)),
       body: Column(
         children: [
-          // Channel header
           Padding(
             padding: const EdgeInsets.all(16),
             child: Row(
@@ -512,7 +508,22 @@ class _ChannelScreenState extends State<ChannelScreen> {
                 : _error != null
                     ? ErrorView(message: _error!, onRetry: _load)
                     : _videos.isEmpty
-                        ? const Center(child: Text('No videos'))
+                        ? Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                const Icon(Icons.video_library_outlined,
+                                    size: 60, color: Colors.grey),
+                                const SizedBox(height: 12),
+                                const Text('No videos found'),
+                                const SizedBox(height: 12),
+                                ElevatedButton(
+                                  onPressed: _load,
+                                  child: const Text('Retry'),
+                                ),
+                              ],
+                            ),
+                          )
                         : ListView.builder(
                             itemCount: _videos.length,
                             itemBuilder: (_, i) => VideoTile(
@@ -540,7 +551,7 @@ class _ChannelScreenState extends State<ChannelScreen> {
   }
 }
 
-/// ═══════════════════════ PLAYER ═══════════════════════
+/// ═══════════════════════ PLAYER (HD via audio merge) ═══════════════════════
 class PlayerScreen extends StatefulWidget {
   final VideoItem video;
   const PlayerScreen({super.key, required this.video});
@@ -593,8 +604,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       }
       _streams = streams;
       _currentStream = streams.first;
-      await _player.open(Media(_currentStream!.url));
-      await _player.play();
+      await _openStream(_currentStream!);
       setState(() => _loading = false);
     } catch (e) {
       setState(() {
@@ -602,6 +612,19 @@ class _PlayerScreenState extends State<PlayerScreen> {
         _loading = false;
       });
     }
+  }
+
+  /// video-only হলে audio merge করে open করি
+  Future<void> _openStream(VideoStreamInfo stream) async {
+    if (stream.needsAudioMerge) {
+      // Video + Audio merge
+      await _player.open(
+        Media(stream.url, extras: {'audio': stream.audioUrl}),
+      );
+    } else {
+      await _player.open(Media(stream.url));
+    }
+    await _player.play();
   }
 
   Future<void> _loadRelated() async {
@@ -615,8 +638,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   Future<void> _changeQuality(VideoStreamInfo stream) async {
     final wasPlaying = _isPlaying;
-    await _player.open(Media(stream.url));
-    if (wasPlaying) await _player.play();
+    await _openStream(stream);
+    if (!wasPlaying) await _player.pause();
     setState(() => _currentStream = stream);
   }
 
@@ -652,7 +675,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
               tooltip: 'Quality',
               onSelected: _changeQuality,
               itemBuilder: (_) => _streams.map((s) {
-                final isCurrent = s.quality == _currentStream!.quality;
+                final isCurrent = s.quality == _currentStream!.quality &&
+                    s.format == _currentStream!.format;
                 return PopupMenuItem(
                   value: s,
                   child: Row(
@@ -666,6 +690,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       ),
                       const SizedBox(width: 8),
                       Text(s.quality),
+                      const SizedBox(width: 8),
+                      if (s.format == 'video-only')
+                        const Icon(Icons.hd, size: 14, color: Colors.red),
                     ],
                   ),
                 );
@@ -728,10 +755,22 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                 color: Colors.grey[900],
                                 borderRadius: BorderRadius.circular(8),
                               ),
-                              child: Text(
-                                _currentStream!.quality,
-                                style: const TextStyle(
-                                    color: Colors.white, fontSize: 12),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  if (_currentStream!.format ==
+                                      'video-only')
+                                    const Padding(
+                                      padding: EdgeInsets.only(right: 4),
+                                      child: Icon(Icons.hd,
+                                          size: 14, color: Colors.red),
+                                    ),
+                                  Text(
+                                    _currentStream!.quality,
+                                    style: const TextStyle(
+                                        color: Colors.white, fontSize: 12),
+                                  ),
+                                ],
                               ),
                             ),
                           ],
@@ -977,10 +1016,16 @@ class _SubscriptionsTab extends StatelessWidget {
         return ListTile(
           leading: CircleAvatar(
             backgroundColor: Colors.red[900],
-            child: Text(
-              (data['name']?.toString() ?? '?')[0].toUpperCase(),
-              style: const TextStyle(color: Colors.white),
-            ),
+            backgroundImage:
+                (data['thumbnail']?.toString() ?? '').isNotEmpty
+                    ? NetworkImage(data['thumbnail'].toString())
+                    : null,
+            child: (data['thumbnail']?.toString() ?? '').isEmpty
+                ? Text(
+                    (data['name']?.toString() ?? '?')[0].toUpperCase(),
+                    style: const TextStyle(color: Colors.white),
+                  )
+                : null,
           ),
           title: Text(data['name']?.toString() ?? 'Unknown'),
           onTap: () => Navigator.push(
@@ -1005,7 +1050,7 @@ class _SubscriptionsTab extends StatelessWidget {
   }
 }
 
-/// ═══════════════════════ MENU ═══════════════════════
+/// ═══════════════════════ MENU (শুধু Region) ═══════════════════════
 class MenuScreen extends StatelessWidget {
   const MenuScreen({super.key});
 
@@ -1019,28 +1064,6 @@ class MenuScreen extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.only(bottom: 100),
         children: [
-          ListTile(
-            leading: const Icon(Icons.subscriptions, color: Colors.red),
-            title: const Text('My Subscriptions'),
-            subtitle: Text(
-              '${storage.getSubscribedChannelUrls().length} channels',
-              style: TextStyle(color: Colors.grey[500], fontSize: 12),
-            ),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const MySubscriptionsScreen()),
-            ),
-          ),
-          ListTile(
-            leading: const Icon(Icons.history, color: Colors.red),
-            title: const Text('History'),
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const LibraryScreen()),
-            ),
-          ),
-          const Divider(),
           ListTile(
             leading: const Icon(Icons.public, color: Colors.red),
             title: const Text('Region'),
@@ -1065,70 +1088,6 @@ class MenuScreen extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
-}
-
-class MySubscriptionsScreen extends StatelessWidget {
-  const MySubscriptionsScreen({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    final storage = context.watch<StorageService>();
-    final subs = storage.getSubscriptions();
-
-    return Scaffold(
-      appBar: AppBar(title: const Text('My Subscriptions')),
-      body: subs.isEmpty
-          ? const Center(
-              child: Padding(
-                padding: EdgeInsets.all(24),
-                child: Text(
-                  'No subscriptions yet.\nSubscribe from any video or channel.',
-                  textAlign: TextAlign.center,
-                ),
-              ),
-            )
-          : ListView.builder(
-              itemCount: subs.length,
-              itemBuilder: (_, i) {
-                final url = subs.keys.elementAt(i);
-                final data = subs[url]!;
-                return ListTile(
-                  leading: CircleAvatar(
-                    backgroundColor: Colors.red[900],
-                    backgroundImage: (data['thumbnail']?.toString() ?? '')
-                            .isNotEmpty
-                        ? NetworkImage(data['thumbnail'].toString())
-                        : null,
-                    child: (data['thumbnail']?.toString() ?? '').isEmpty
-                        ? Text(
-                            (data['name']?.toString() ?? '?')[0].toUpperCase(),
-                            style: const TextStyle(color: Colors.white),
-                          )
-                        : null,
-                  ),
-                  title: Text(data['name']?.toString() ?? 'Unknown'),
-                  trailing: IconButton(
-                    icon: const Icon(Icons.delete_outline),
-                    onPressed: () => storage.unsubscribe(url),
-                  ),
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => ChannelScreen(
-                        channel: ChannelItem(
-                          url: url,
-                          name: data['name']?.toString() ?? '',
-                          thumbnailUrl:
-                              data['thumbnail']?.toString() ?? '',
-                        ),
-                      ),
-                    ),
-                  ),
-                );
-              },
-            ),
     );
   }
 }
