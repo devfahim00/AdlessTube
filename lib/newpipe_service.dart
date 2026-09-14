@@ -9,21 +9,18 @@ class NewPipeService {
       [SearchFilter.videos.value],
     );
 
+    // response.result কখনো null হয় না, তাই সরাসরি ব্যবহার
     final searchResult = response.result;
-    if (searchResult == null) return [];
-
-    return searchResult.videos
+    final videos = searchResult?.videos ?? [];
+    return videos
         .map(_toVideo)
         .where((v) => !v.isLive)
         .toList();
   }
 
   /// ─── ট্রেন্ডিং (region অনুযায়ী) ───
-  /// newpipeextractor_dart TrendingExtractor এ region param না থাকলে
-  /// আমরা region-specific search query দিয়ে trending simulate করছি।
   Future<List<VideoItem>> getTrending({String region = 'US'}) async {
     try {
-      // প্রথমে default trending try
       final result = await TrendingExtractor.getTrendingVideos();
       final items = result.items.map(_toVideo).where((v) => !v.isLive).toList();
       if (items.isNotEmpty) return items;
@@ -34,7 +31,6 @@ class NewPipeService {
   }
 
   Future<List<VideoItem>> _trendingFallback(String region) async {
-    // region অনুযায়ী trending keyword search
     final regionName = _regionToName(region);
     final queries = [
       '$regionName trending',
@@ -104,12 +100,14 @@ class NewPipeService {
   }
 
   /// ─── Related videos (video page এর নিচে) ───
+  /// ServiceExtractor.getRelatedItems ব্যবহার করে।
+  /// YouTube এর serviceId = 0
   Future<List<VideoItem>> getRelatedVideos(String videoUrl) async {
     try {
-      final video = await VideoExtractor.getStream(videoUrl);
-      final related = video.relatedStreams;
-      if (related == null) return [];
-      return related
+      final response = await ServiceExtractor.getRelatedItems(0, videoUrl);
+      // response একটি SearchResult — videos property আছে
+      final videos = response.videos ?? [];
+      return videos
           .map(_toVideo)
           .where((v) => !v.isLive && v.id.isNotEmpty)
           .toList();
@@ -119,15 +117,15 @@ class NewPipeService {
   }
 
   /// ─── সব quality stream URL পাওয়া (muxed + video-only) ───
-  /// 720p muxed এ cap করা হয় না — সব available quality return করে।
   Future<List<VideoStreamInfo>> getAvailableStreams(String videoUrl) async {
     final video = await VideoExtractor.getStream(videoUrl);
     final streams = <VideoStreamInfo>[];
 
     // Muxed streams (video + audio একসাথে)
-    for (final s in video.videoStreams ?? []) {
+    final videoStreams = video.videoStreams ?? [];
+    for (final s in videoStreams) {
       final url = s.url;
-      if (url == null || url.isEmpty) continue;
+      if (url.isEmpty) continue;
       final quality = s.resolution ?? _bitrateToQuality(s.bitrate);
       streams.add(VideoStreamInfo(
         url: url,
@@ -140,9 +138,10 @@ class NewPipeService {
     // Muxed না থাকলে videoWithHighestQuality fallback
     if (streams.isEmpty) {
       final muxed = video.videoWithHighestQuality;
-      if (muxed?.url != null && muxed!.url!.isNotEmpty) {
+      final muxedUrl = muxed.url;
+      if (muxedUrl != null && muxedUrl.isNotEmpty) {
         streams.add(VideoStreamInfo(
-          url: muxed.url!,
+          url: muxedUrl,
           quality: muxed.resolution ?? 'auto',
           format: 'muxed',
         ));
@@ -150,7 +149,8 @@ class NewPipeService {
     }
 
     // Quality অনুযায়ী sort (উচ্চ থেকে নিচ)
-    streams.sort((a, b) => _qualityRank(b.quality).compareTo(_qualityRank(a.quality)));
+    streams.sort((a, b) =>
+        _qualityRank(b.quality).compareTo(_qualityRank(a.quality)));
     return streams;
   }
 
@@ -176,7 +176,7 @@ class NewPipeService {
     return '240p';
   }
 
-  /// ─── Backward-compatible: সবচেয়ে ভালো stream URL ───
+  /// ─── Backward-compatible ───
   Future<String?> getBestMuxedStreamUrl(String videoUrl) async {
     final streams = await getAvailableStreams(videoUrl);
     if (streams.isEmpty) return null;
@@ -203,14 +203,11 @@ class NewPipeService {
 
   bool _detectLive(dynamic item) {
     try {
-      // duration null বা 0 হলে live হতে পারে
-      if (item.duration == null) return true;
-      if (item.duration is Duration && (item.duration as Duration).inSeconds == 0) {
-        return true;
-      }
-      if (item.duration is int && (item.duration as int) == 0) return true;
+      final d = item.duration;
+      if (d == null) return true;
+      if (d is Duration && d.inSeconds == 0) return true;
+      if (d is int && d == 0) return true;
     } catch (_) {}
-    // title এ "LIVE" keyword থাকলে
     final title = (item.name ?? '').toString().toUpperCase();
     if (title.contains('🔴') || title.contains('LIVE')) return true;
     return false;
