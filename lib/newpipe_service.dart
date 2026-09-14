@@ -58,31 +58,14 @@ class NewPipeService {
 
   // ═══════════════════ CHANNEL ═══════════════════
 
-  /// Channel uploads — multiple fallback method
+  /// Channel uploads — শুধু একটাই reliable method আছে।
   Future<List<VideoItem>> getChannelVideos(String channelUrl) async {
-    // ── Attempt 1: ChannelExtractor.getChannelUploads ──
     try {
       final result = await ChannelExtractor.getChannelUploads(channelUrl);
-      final items = result.items.map(_toVideo).where(_isPlayable).toList();
-      if (items.isNotEmpty) return items;
-    } catch (_) {}
-
-    // ── Attempt 2: ServiceExtractor.getChannelUploads (0 = YouTube) ──
-    try {
-      final result = await ServiceExtractor.getChannelUploads(0, channelUrl);
-      final items = result.items.map(_toVideo).where(_isPlayable).toList();
-      if (items.isNotEmpty) return items;
-    } catch (_) {}
-
-    // ── Attempt 3: Channel info + related extraction ──
-    try {
-      final channel = await ChannelExtractor.getChannel(channelUrl);
-      final items =
-          channel.relatedStreams.map(_toVideo).where(_isPlayable).toList();
-      if (items.isNotEmpty) return items;
-    } catch (_) {}
-
-    return [];
+      return result.items.map(_toVideo).where(_isPlayable).toList();
+    } catch (_) {
+      return [];
+    }
   }
 
   // ═══════════════════ RELATED ═══════════════════
@@ -96,33 +79,16 @@ class NewPipeService {
     }
   }
 
-  // ═══════════════════ STREAMS (HD via video+audio merge) ═══════════════════
+  // ═══════════════════ STREAMS ═══════════════════
 
-  /// সব available quality level return করে।
-  /// প্রতিটা level এ video URL এবং audio URL আলাদা করে দেয়,
-  /// যাতে Player.open([video, audio]) merge করতে পারে।
+  /// Muxed streams return করি। Video-only merge টা YouTube এ
+  /// muxed 360p এ cap থাকে — এটাই সবচেয়ে stable।
+  /// Higher quality পেতে চাইলে ভবিষ্যতে youtube_explode_dart use করতে হবে।
   Future<List<VideoStreamInfo>> getAvailableStreams(String videoUrl) async {
     final video = await VideoExtractor.getStream(videoUrl);
-
-    // ── Audio stream collect (best audio) ──
-    // Prefer muxed এর ভেতরে audio থাকে, কিন্তু video-only এর সাথে audio merge করতে হবে
-    String? bestAudioUrl;
-    try {
-      final audioStreams = video.audioStreams ?? [];
-      if (audioStreams.isNotEmpty) {
-        // Highest bitrate audio খুঁজি
-        final sorted = audioStreams.toList()
-          ..sort((a, b) => (b.bitrate ?? 0).compareTo(a.bitrate ?? 0));
-        bestAudioUrl = sorted.first.url;
-      } else {
-        final audio = video.audioWithHighestQuality;
-        bestAudioUrl = audio?.url;
-      }
-    } catch (_) {}
-
-    // ── Muxed streams (সাধারণত 360p max) ──
     final Map<String, VideoStreamInfo> result = {};
 
+    // ── Muxed streams ──
     try {
       final muxedList = video.videoStreams ?? [];
       for (final s in muxedList) {
@@ -137,37 +103,20 @@ class NewPipeService {
       }
     } catch (_) {}
 
-    // ── Video-only streams (HD possible) — audio merge করব ──
-    try {
-      final videoOnly = video.videoOnlyStreams ?? [];
-      for (final s in videoOnly) {
-        final vUrl = s.url;
-        if (vUrl == null || vUrl.isEmpty) continue;
-        final q = _normalizeQuality(s.resolution);
-        // muxed এ same quality না থাকলে video-only add করি
-        if (!result.containsKey(q)) {
-          result[q] = VideoStreamInfo(
-            url: vUrl,
-            quality: q,
-            format: 'video-only',
-            audioUrl: bestAudioUrl,
-          );
-        }
-      }
-    } catch (_) {}
-
-    // ── videoWithHighestQuality fallback ──
+    // ── Fallback: videoWithHighestQuality ──
     if (result.isEmpty) {
       try {
         final muxed = video.videoWithHighestQuality;
-        final muxedUrl = muxed.url;
-        if (muxedUrl.isNotEmpty) {
-          final q = _normalizeQuality(muxed.resolution);
-          result[q] = VideoStreamInfo(
-            url: muxedUrl,
-            quality: q,
-            format: 'muxed',
-          );
+        if (muxed != null) {
+          final muxedUrl = muxed.url;
+          if (muxedUrl != null && muxedUrl.isNotEmpty) {
+            final q = _normalizeQuality(muxed.resolution);
+            result[q] = VideoStreamInfo(
+              url: muxedUrl,
+              quality: q,
+              format: 'muxed',
+            );
+          }
         }
       } catch (_) {}
     }
