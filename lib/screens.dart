@@ -8,7 +8,7 @@ import 'storage_service.dart';
 import 'widgets.dart';
 import 'region_service.dart';
 
-/// ═══════════════════ হোমপেজ — Region + Subscription feed ═══════════════════
+/// ═══════════════════ হোমপেজ ═══════════════════
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -19,7 +19,6 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final _service = NewPipeService();
   List<VideoItem> _feed = [];
-  List<VideoItem> _trending = [];
   List<VideoItem> _subscribedFeed = [];
   bool _loading = true;
   String? _error;
@@ -40,7 +39,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final storage = context.read<StorageService>();
       final region = storage.regionCode;
 
-      // 1. Region trending (live filtered)
+      // 1. Region trending
       final trending = await _service.getTrending(region: region);
 
       // 2. Subscribed channels এর video
@@ -72,7 +71,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
       setState(() {
         _subscribedFeed = subFeed;
-        _trending = trending;
         _feed = merged;
       });
     } catch (e) {
@@ -86,6 +84,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     final storage = context.watch<StorageService>();
     final region = storage.regionCode;
+    final flag = RegionService.flagFor(region);
 
     return Scaffold(
       appBar: AppBar(
@@ -100,7 +99,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Text(
-                '${RegionService.flagFor(region)} ${region}',
+                '$flag $region',
                 style: const TextStyle(fontSize: 12),
               ),
             ),
@@ -140,7 +139,8 @@ class _HomeScreenState extends State<HomeScreen> {
                         const Divider(),
                       ],
                       _SectionHeader(
-                        title: 'Trending in ${RegionService.nameFor(region)}',
+                        title:
+                            'Trending in ${RegionService.nameFor(region)}',
                         icon: Icons.trending_up,
                       ),
                       ..._feed.map(_buildTile),
@@ -254,7 +254,8 @@ class _SearchScreenState extends State<SearchScreen> {
                         Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (_) => PlayerScreen(video: _results[i]),
+                            builder: (_) =>
+                                PlayerScreen(video: _results[i]),
                           ),
                         );
                       }
@@ -265,7 +266,7 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 }
 
-/// ═══════════════════ প্লেব্যাক পেজ — Quality change + Related videos ═══════════════════
+/// ═══════════════════ প্লেব্যাক পেজ ═══════════════════
 class PlayerScreen extends StatefulWidget {
   final VideoItem video;
   const PlayerScreen({super.key, required this.video});
@@ -317,7 +318,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         return;
       }
       _streams = streams;
-      _currentStream = streams.first; // highest quality
+      _currentStream = streams.first;
       await _player.open(Media(_currentStream!.url));
       await _player.play();
       setState(() => _loading = false);
