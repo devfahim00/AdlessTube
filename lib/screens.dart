@@ -8,7 +8,7 @@ import 'storage_service.dart';
 import 'widgets.dart';
 import 'region_service.dart';
 
-/// ═══════════════════════ MAIN SHELL ═══════════════════════
+/// ═══════════════════════ MAIN SHELL (Bottom Pill Navbar) ═══════════════════════
 class MainShell extends StatefulWidget {
   const MainShell({super.key});
 
@@ -551,7 +551,7 @@ class _ChannelScreenState extends State<ChannelScreen> {
   }
 }
 
-/// ═══════════════════════ PLAYER (HD via audio merge) ═══════════════════════
+/// ═══════════════════════ PLAYER ═══════════════════════
 class PlayerScreen extends StatefulWidget {
   final VideoItem video;
   const PlayerScreen({super.key, required this.video});
@@ -604,7 +604,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
       }
       _streams = streams;
       _currentStream = streams.first;
-      await _openStream(_currentStream!);
+      await _player.open(Media(_currentStream!.url));
+      await _player.play();
       setState(() => _loading = false);
     } catch (e) {
       setState(() {
@@ -612,19 +613,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
         _loading = false;
       });
     }
-  }
-
-  /// video-only হলে audio merge করে open করি
-  Future<void> _openStream(VideoStreamInfo stream) async {
-    if (stream.needsAudioMerge) {
-      // Video + Audio merge
-      await _player.open(
-        Media(stream.url, extras: {'audio': stream.audioUrl}),
-      );
-    } else {
-      await _player.open(Media(stream.url));
-    }
-    await _player.play();
   }
 
   Future<void> _loadRelated() async {
@@ -638,8 +626,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   Future<void> _changeQuality(VideoStreamInfo stream) async {
     final wasPlaying = _isPlaying;
-    await _openStream(stream);
-    if (!wasPlaying) await _player.pause();
+    await _player.open(Media(stream.url));
+    if (wasPlaying) {
+      await _player.play();
+    } else {
+      await _player.pause();
+    }
     setState(() => _currentStream = stream);
   }
 
@@ -690,9 +682,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       ),
                       const SizedBox(width: 8),
                       Text(s.quality),
-                      const SizedBox(width: 8),
-                      if (s.format == 'video-only')
-                        const Icon(Icons.hd, size: 14, color: Colors.red),
                     ],
                   ),
                 );
@@ -755,22 +744,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                 color: Colors.grey[900],
                                 borderRadius: BorderRadius.circular(8),
                               ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  if (_currentStream!.format ==
-                                      'video-only')
-                                    const Padding(
-                                      padding: EdgeInsets.only(right: 4),
-                                      child: Icon(Icons.hd,
-                                          size: 14, color: Colors.red),
-                                    ),
-                                  Text(
-                                    _currentStream!.quality,
-                                    style: const TextStyle(
-                                        color: Colors.white, fontSize: 12),
-                                  ),
-                                ],
+                              child: Text(
+                                _currentStream!.quality,
+                                style: const TextStyle(
+                                    color: Colors.white, fontSize: 12),
                               ),
                             ),
                           ],
