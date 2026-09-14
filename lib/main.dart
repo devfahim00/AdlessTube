@@ -43,6 +43,6 @@ class _RootRouter extends StatelessWidget {
     if (!storage.hasSelectedRegion) {
       return const RegionSelectScreen();
     }
-    return const HomeScreen();
+    return const MainShell();
   }
 }
