@@ -12,6 +12,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'models.dart';
 import 'newpipe_service.dart';
 import 'storage_service.dart';
+import 'update_service.dart';
 import 'widgets.dart';
 import 'region_service.dart';
 
@@ -25,6 +26,51 @@ class MainShell extends StatefulWidget {
 
 class _MainShellState extends State<MainShell> {
   int _index = 0;
+  bool _checkedForUpdate = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_checkedForUpdate) {
+      _checkedForUpdate = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        unawaited(_checkForUpdate(showUpToDate: false));
+      });
+    }
+  }
+
+  Future<void> _checkForUpdate({required bool showUpToDate}) async {
+    final update = await UpdateService.checkForUpdate();
+    if (!mounted) return;
+    if (update == null) {
+      if (showUpToDate) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('You already have the latest version.')),
+        );
+      }
+      return;
+    }
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Update available'),
+        content: Text('Version ${update.tag} is available for AdlessTube.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Later'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              await launchUrl(update.url, mode: LaunchMode.externalApplication);
+              if (dialogContext.mounted) Navigator.pop(dialogContext);
+            },
+            child: const Text('Update'),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -32,13 +78,26 @@ class _MainShellState extends State<MainShell> {
       0 => const HomeScreen(),
       1 => const ShortsScreen(),
       2 => const LibraryScreen(),
-      _ => const MenuScreen(),
+      _ => MenuScreen(
+          onCheckForUpdate: () => _checkForUpdate(showUpToDate: true)),
     };
     return Scaffold(
-      body: page,
-      bottomNavigationBar: _PillNavBar(
-        currentIndex: _index,
-        onTap: (i) => setState(() => _index = i),
+      body: Stack(
+        children: [
+          Positioned.fill(child: page),
+          Positioned(
+            left: 16,
+            right: 16,
+            bottom: 12,
+            child: SafeArea(
+              top: false,
+              child: _PillNavBar(
+                currentIndex: _index,
+                onTap: (i) => setState(() => _index = i),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -59,16 +118,16 @@ class _PillNavBar extends StatelessWidget {
       (Icons.menu, Icons.menu, 'Menu'),
     ];
 
-    return SafeArea(
-      child: Container(
-        margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    return Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
         decoration: BoxDecoration(
-          color: const Color(0xFF1F1F1F),
+          color: theme.colorScheme.surfaceContainerHighest,
           borderRadius: BorderRadius.circular(40),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.4),
+              color: Colors.black.withValues(alpha: isDark ? 0.4 : 0.18),
               blurRadius: 12,
               offset: const Offset(0, 4),
             ),
@@ -88,7 +147,7 @@ class _PillNavBar extends StatelessWidget {
                   padding: const EdgeInsets.symmetric(vertical: 10),
                   decoration: BoxDecoration(
                     color: selected
-                        ? Colors.white.withValues(alpha: 0.12)
+                        ? theme.colorScheme.primary.withValues(alpha: 0.14)
                         : Colors.transparent,
                     borderRadius: BorderRadius.circular(30),
                   ),
@@ -97,15 +156,17 @@ class _PillNavBar extends StatelessWidget {
                     children: [
                       Icon(
                         selected ? filled : outlined,
-                        color: selected ? Colors.red : Colors.grey[400],
+                        color: selected
+                            ? theme.colorScheme.primary
+                            : theme.colorScheme.onSurfaceVariant,
                         size: 22,
                       ),
                       if (selected) ...[
                         const SizedBox(width: 6),
                         Text(
                           label,
-                          style: const TextStyle(
-                            color: Colors.white,
+                          style: TextStyle(
+                            color: theme.colorScheme.onSurface,
                             fontWeight: FontWeight.w600,
                             fontSize: 13,
                           ),
@@ -118,7 +179,6 @@ class _PillNavBar extends StatelessWidget {
             );
           }),
         ),
-      ),
     );
   }
 }
@@ -611,14 +671,17 @@ class _ChannelScreenState extends State<ChannelScreen>
               if (mounted) {
                 Navigator.push(
                   context,
-                  MaterialPageRoute(builder: (_) => PlayerScreen(video: video)),
+                  MaterialPageRoute(
+                    builder: (_) => tab == 'shorts'
+                        ? ShortsScreen(shorts: items, initialIndex: i)
+                        : PlayerScreen(video: video),
+                  ),
                 );
               }
             },
           );
         },
-      ),
-    );
+      );
   }
 
   @override
@@ -653,7 +716,7 @@ class _ChannelScreenState extends State<ChannelScreen>
                     children: [
                       Text(
                         widget.channel.name,
-                        style: const TextStyle(
+                          style: TextStyle(
                           fontSize: 18,
                           fontWeight: FontWeight.bold,
                         ),
@@ -743,8 +806,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
         _savePlaybackState(position);
       }
     });
-
-    if (Platform.isAndroid) unawaited(_enableAutoPip());
 
     _loadStreams();
     _loadRelated();
@@ -838,14 +899,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Future<void> _changeSpeed(double speed) async {
     await _player.setRate(speed);
     if (mounted) setState(() => _playbackSpeed = speed);
-  }
-
-  Future<void> _enableAutoPip() async {
-    try {
-      await AndroidPIP().setAutoPipMode();
-    } catch (_) {
-      // Auto-PiP requires Android 12; the PiP button remains available.
-    }
   }
 
   Future<void> _openStream(VideoStreamInfo stream, {Duration? start}) async {
@@ -1320,7 +1373,12 @@ class _SubscriptionsTab extends StatelessWidget {
 
 /// ═══════════════════════ MENU (শুধু Region) ═══════════════════════
 class MenuScreen extends StatelessWidget {
-  const MenuScreen({super.key});
+  final Future<void> Function() onCheckForUpdate;
+
+  const MenuScreen({
+    super.key,
+    required this.onCheckForUpdate,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1366,11 +1424,17 @@ class MenuScreen extends StatelessWidget {
               );
             },
           ),
+          ListTile(
+            leading: const Icon(Icons.system_update_outlined),
+            title: const Text('Check for update'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: onCheckForUpdate,
+          ),
           const Divider(),
           const Padding(
             padding: EdgeInsets.all(16),
             child: Text(
-              'AdlessTube v1.0.0\nAd-free YouTube client',
+              'AdlessTube v1.0.1\nAd-free YouTube client',
               style: TextStyle(color: Colors.grey, fontSize: 12),
               textAlign: TextAlign.center,
             ),
@@ -1382,7 +1446,14 @@ class MenuScreen extends StatelessWidget {
 }
 
 class ShortsScreen extends StatefulWidget {
-  const ShortsScreen({super.key});
+  final List<VideoItem>? shorts;
+  final int initialIndex;
+
+  const ShortsScreen({
+    super.key,
+    this.shorts,
+    this.initialIndex = 0,
+  });
 
   @override
   State<ShortsScreen> createState() => _ShortsScreenState();
@@ -1394,11 +1465,25 @@ class _ShortsScreenState extends State<ShortsScreen> {
   bool _loading = true;
   String? _error;
   int _activeIndex = 0;
+  late final PageController _pageController;
 
   @override
   void initState() {
     super.initState();
-    _load();
+    _activeIndex = widget.initialIndex;
+    _pageController = PageController(initialPage: widget.initialIndex);
+    if (widget.shorts != null) {
+      _shorts = widget.shorts!;
+      _loading = false;
+    } else {
+      _load();
+    }
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -1434,6 +1519,7 @@ class _ShortsScreenState extends State<ShortsScreen> {
                           style: TextStyle(color: Colors.white)),
                     )
                   : PageView.builder(
+                      controller: _pageController,
                       scrollDirection: Axis.vertical,
                       itemCount: _shorts.length,
                       onPageChanged: (index) {
