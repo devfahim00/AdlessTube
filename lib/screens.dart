@@ -57,7 +57,7 @@ class _MainShellState extends State<MainShell> {
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('Update available'),
-        content: Text('Version ${update.tag} is available for AdlessTube.'),
+        content: Text('Version ${update.tag} is available for .'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext),
@@ -1995,7 +1995,7 @@ class MenuScreen extends StatelessWidget {
           const Padding(
             padding: EdgeInsets.all(16),
             child: Text(
-              'AdlessTube v1.0.2\nAd-free YouTube client',
+              'AdlessTube v1.0.3\nAd-free YouTube client',
               style: TextStyle(color: Colors.grey, fontSize: 12),
               textAlign: TextAlign.center,
             ),
