@@ -313,28 +313,6 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
-class _SectionHeader extends StatelessWidget {
-  final String title;
-  final IconData icon;
-  const _SectionHeader({required this.title, required this.icon});
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-      child: Row(
-        children: [
-          Icon(icon, size: 20, color: Colors.red),
-          const SizedBox(width: 8),
-          Text(title,
-              style:
-                  const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-        ],
-      ),
-    );
-  }
-}
-
 /// ═══════════════════════ SEARCH ═══════════════════════
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
@@ -1604,14 +1582,6 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen> {
     unawaited(context.read<MusicPlaybackService>().play(widget.song));
   }
 
-  Future<void> _leave() async {
-    if (_leaving) return;
-    setState(() => _leaving = true);
-    final music = context.read<MusicPlaybackService>();
-    if (!music.isPlaying) await music.stop();
-    if (mounted) Navigator.of(context).pop();
-  }
-
   Future<void> _stopAndLeave() async {
     if (_leaving) return;
     setState(() => _leaving = true);
@@ -2142,8 +2112,9 @@ class _ShortVideoPageState extends State<_ShortVideoPage> {
 
   Future<void> _start() async {
     _started = true;
-    await context.read<MusicPlaybackService>().stop();
     final preference = context.read<StorageService>().defaultQuality;
+    final music = context.read<MusicPlaybackService>();
+    await music.stop();
     try {
       final streams = await _service.getAvailableStreams(widget.video.url);
       if (streams.isEmpty) {

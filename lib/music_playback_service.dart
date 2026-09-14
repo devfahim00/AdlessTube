@@ -70,7 +70,7 @@ class _AdlessAudioHandler extends BaseAudioHandler
           MediaControl.skipToPrevious,
           _player.playing ? MediaControl.pause : MediaControl.play,
           MediaControl.skipToNext,
-          const MediaControl.custom(
+          MediaControl.custom(
             androidIcon: 'drawable/ic_action_favorite',
             label: 'Favourite',
             name: 'favorite',
