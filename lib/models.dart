@@ -60,11 +60,14 @@ class ChannelItem {
 
 class VideoStreamInfo {
   final String url;
+  /// Separate audio URL for YouTube's adaptive (video-only) streams.
+  final String? audioUrl;
   final String quality;
   final String format;
 
   VideoStreamInfo({
     required this.url,
+    this.audioUrl,
     required this.quality,
     required this.format,
   });

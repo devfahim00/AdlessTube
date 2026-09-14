@@ -88,6 +88,32 @@ class NewPipeService {
     final video = await VideoExtractor.getStream(videoUrl);
     final Map<String, VideoStreamInfo> result = {};
 
+    // YouTube exposes HD formats as video-only DASH streams. Pair each one
+    // with matching audio so media_kit/mpv can play it with sound.
+    try {
+      for (final stream in video.videoOnlyStreams) {
+        final videoOnlyUrl = stream.url;
+        final audioUrl = video.bestAudioForVideo(stream)?.url;
+        if (videoOnlyUrl == null ||
+            videoOnlyUrl.isEmpty ||
+            audioUrl == null ||
+            audioUrl.isEmpty) {
+          continue;
+        }
+        final quality = _normalizeQuality(stream.resolution);
+        final format = (stream.formatSuffix ??
+                stream.formatName ??
+                'adaptive')
+            .toLowerCase();
+        result['$quality-$format'] = VideoStreamInfo(
+          url: videoOnlyUrl,
+          audioUrl: audioUrl,
+          quality: quality,
+          format: format,
+        );
+      }
+    } catch (_) {}
+
     // ── Muxed streams ──
     try {
       final muxedList = video.videoStreams ?? [];
@@ -95,7 +121,7 @@ class NewPipeService {
         final url = s.url;
         if (url == null || url.isEmpty) continue;
         final q = _normalizeQuality(s.resolution);
-        result[q] = VideoStreamInfo(
+        result['$q-muxed'] = VideoStreamInfo(
           url: url,
           quality: q,
           format: 'muxed',
@@ -111,7 +137,7 @@ class NewPipeService {
           final muxedUrl = muxed.url;
           if (muxedUrl != null && muxedUrl.isNotEmpty) {
             final q = _normalizeQuality(muxed.resolution);
-            result[q] = VideoStreamInfo(
+            result['$q-muxed'] = VideoStreamInfo(
               url: muxedUrl,
               quality: q,
               format: 'muxed',

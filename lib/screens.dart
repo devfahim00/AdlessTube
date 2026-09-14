@@ -604,7 +604,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       }
       _streams = streams;
       _currentStream = streams.first;
-      await _player.open(Media(_currentStream!.url));
+      await _openStream(_currentStream!);
       await _player.play();
       setState(() => _loading = false);
     } catch (e) {
@@ -626,13 +626,20 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   Future<void> _changeQuality(VideoStreamInfo stream) async {
     final wasPlaying = _isPlaying;
-    await _player.open(Media(stream.url));
+    await _openStream(stream);
     if (wasPlaying) {
       await _player.play();
     } else {
       await _player.pause();
     }
     setState(() => _currentStream = stream);
+  }
+
+  Future<void> _openStream(VideoStreamInfo stream) async {
+    await _player.open(Media(stream.url));
+    if (stream.audioUrl != null) {
+      await _player.setAudioTrack(AudioTrack.uri(stream.audioUrl!));
+    }
   }
 
   void _openRelated(VideoItem v) async {
@@ -681,7 +688,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
                         color: isCurrent ? Colors.red : null,
                       ),
                       const SizedBox(width: 8),
-                      Text(s.quality),
+                      Text(
+                        '${s.quality}${s.format == 'muxed' ? '' : ' (${s.format})'}',
+                      ),
                     ],
                   ),
                 );
