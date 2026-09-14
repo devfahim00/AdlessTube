@@ -142,7 +142,7 @@ class _PillNavBar extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
           children: List.generate(items.length, (i) {
             final selected = i == currentIndex;
-            final (outlined, filled, label) = items[i];
+            final (outlined, filled, _) = items[i];
             return Expanded(
               child: GestureDetector(
                 onTap: () => onTap(i),
@@ -166,17 +166,6 @@ class _PillNavBar extends StatelessWidget {
                             : theme.colorScheme.onSurfaceVariant,
                         size: 22,
                       ),
-                      if (selected) ...[
-                        const SizedBox(width: 6),
-                        Text(
-                          label,
-                          style: TextStyle(
-                            color: theme.colorScheme.onSurface,
-                            fontWeight: FontWeight.w600,
-                            fontSize: 13,
-                          ),
-                        ),
-                      ],
                     ],
                   ),
                 ),
