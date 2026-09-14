@@ -47,12 +47,10 @@ class VideoStreamInfo {
   final String url;
   final String quality; // e.g. "720p", "1080p", "480p"
   final String format; // "muxed" / "video" / "audio"
-  final int? bitrate;
 
   VideoStreamInfo({
     required this.url,
     required this.quality,
     required this.format,
-    this.bitrate,
   });
 }
