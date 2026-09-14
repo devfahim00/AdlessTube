@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:provider/provider.dart';
 import 'models.dart';
+import 'storage_service.dart';
 
 class VideoTile extends StatelessWidget {
   final VideoItem video;
@@ -56,6 +58,58 @@ class VideoTile extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+/// Subscribe / Unsubscribe button (channel name এর পাশে)
+class SubscribeButton extends StatelessWidget {
+  final String channelUrl;
+  final String channelName;
+  final String thumbnail;
+  final bool compact;
+
+  const SubscribeButton({
+    super.key,
+    required this.channelUrl,
+    required this.channelName,
+    this.thumbnail = '',
+    this.compact = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final storage = context.watch<StorageService>();
+    final isSubscribed = storage.isSubscribed(channelUrl);
+
+    return compact
+        ? IconButton(
+            icon: Icon(
+              isSubscribed ? Icons.notifications_active : Icons.notifications_none,
+              color: isSubscribed ? Colors.red : Colors.grey,
+            ),
+            tooltip: isSubscribed ? 'Unsubscribe' : 'Subscribe',
+            onPressed: () => storage.toggleSubscribe(
+              channelUrl: channelUrl,
+              channelName: channelName,
+              thumbnail: thumbnail,
+            ),
+          )
+        : ElevatedButton.icon(
+            onPressed: () => storage.toggleSubscribe(
+              channelUrl: channelUrl,
+              channelName: channelName,
+              thumbnail: thumbnail,
+            ),
+            icon: Icon(isSubscribed ? Icons.check : Icons.add),
+            label: Text(isSubscribed ? 'Subscribed' : 'Subscribe'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: isSubscribed ? Colors.grey[800] : Colors.red,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+              ),
+            ),
+          );
   }
 }
 
