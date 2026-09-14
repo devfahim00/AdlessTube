@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:provider/provider.dart';
 import 'screens.dart';
+import 'music_playback_service.dart';
 import 'storage_service.dart';
 import 'region_select_screen.dart';
 
@@ -13,8 +14,11 @@ void main() async {
   await storage.init();
 
   runApp(
-    ChangeNotifierProvider.value(
-      value: storage,
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider.value(value: storage),
+        ChangeNotifierProvider(create: (_) => MusicPlaybackService()),
+      ],
       child: const AdlessTubeApp(),
     ),
   );

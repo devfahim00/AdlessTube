@@ -10,6 +10,7 @@ import 'package:newpipeextractor_dart/newpipeextractor_dart.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'models.dart';
+import 'music_playback_service.dart';
 import 'newpipe_service.dart';
 import 'storage_service.dart';
 import 'update_service.dart';
@@ -1284,6 +1285,7 @@ class _MusicScreenState extends State<MusicScreen> {
   @override
   Widget build(BuildContext context) {
     final storage = context.watch<StorageService>();
+    final music = context.watch<MusicPlaybackService>();
     return Scaffold(
       appBar: AppBar(
         title: const Text('Music'),
@@ -1366,6 +1368,21 @@ class _MusicScreenState extends State<MusicScreen> {
                     },
                   ),
                 ),
+      floatingActionButton: music.isPlaying && music.song != null
+          ? Padding(
+              padding: const EdgeInsets.only(bottom: 72),
+              child: FloatingActionButton.small(
+                tooltip: 'Open now playing',
+                child: const Icon(Icons.album),
+                onPressed: () => Navigator.push<void>(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => MusicPlayerScreen(song: music.song!),
+                  ),
+                ),
+              ),
+            )
+          : null,
     );
   }
 }
@@ -1380,83 +1397,55 @@ class MusicPlayerScreen extends StatefulWidget {
 }
 
 class _MusicPlayerScreenState extends State<MusicPlayerScreen> {
-  final _service = NewPipeService();
-  late final Player _player;
   late final StorageService _storage;
-  bool _loading = true;
-  bool _playing = false;
-  String? _error;
   bool _leaving = false;
 
   @override
   void initState() {
     super.initState();
     _storage = context.read<StorageService>();
-    _player = Player();
-    _player.stream.playing.listen((playing) {
-      if (mounted) setState(() => _playing = playing);
-    });
-    _load();
-  }
-
-  Future<void> _load() async {
-    if (mounted) {
-      setState(() {
-        _loading = true;
-        _error = null;
-      });
-    }
-    try {
-      final audio = await _service.getBestAudioStream(widget.song.url);
-      if (audio == null) {
-        throw Exception('No audio stream found for this song.');
-      }
-      await _player.open(Media(audio.url));
-      await _player.play();
-      if (mounted) setState(() => _loading = false);
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _error = e.toString();
-          _loading = false;
-        });
-      }
-    }
+    unawaited(context.read<MusicPlaybackService>().play(widget.song));
   }
 
   Future<void> _leave() async {
     if (_leaving) return;
     setState(() => _leaving = true);
-    await _player.stop();
+    final music = context.read<MusicPlaybackService>();
+    if (!music.isPlaying) await music.stop();
     if (mounted) Navigator.of(context).pop();
   }
 
-  @override
-  void dispose() {
-    unawaited(_player.stop());
-    unawaited(_player.dispose());
-    super.dispose();
+  Future<void> _stopAndLeave() async {
+    if (_leaving) return;
+    setState(() => _leaving = true);
+    await context.read<MusicPlaybackService>().stop();
+    if (mounted) Navigator.of(context).pop();
   }
 
   @override
   Widget build(BuildContext context) {
     final liked = context.watch<StorageService>().isSongLiked(widget.song.id);
+    final music = context.watch<MusicPlaybackService>();
+    final player = music.player;
     final navigator = Navigator.of(context);
     return PopScope(
       canPop: _leaving,
       onPopInvokedWithResult: (didPop, _) async {
         if (!didPop && !_leaving) {
           setState(() => _leaving = true);
-          await _player.stop();
+          if (!music.isPlaying) await music.stop();
           if (mounted) navigator.pop();
         }
       },
       child: Scaffold(
         appBar: AppBar(title: const Text('Now playing')),
-        body: _loading
+        body: music.isLoading
             ? const Center(child: CircularProgressIndicator())
-            : _error != null
-                ? ErrorView(message: _error!, onRetry: _load)
+            : music.error != null
+                ? ErrorView(
+                    message: music.error!,
+                    onRetry: () => music.play(widget.song),
+                  )
                 : Padding(
                     padding: const EdgeInsets.all(24),
                     child: Column(
@@ -1500,11 +1489,41 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen> {
                         Text(widget.song.uploader),
                         const SizedBox(height: 18),
                         StreamBuilder<Duration>(
-                          stream: _player.stream.position,
-                          builder: (context, snapshot) => Text(
-                            _formatMusicTime(snapshot.data ?? Duration.zero),
-                            style: Theme.of(context).textTheme.bodySmall,
-                          ),
+                          stream: player.stream.position,
+                          builder: (context, snapshot) {
+                            final position = snapshot.data ?? Duration.zero;
+                            final duration = player.state.duration;
+                            final max = duration.inMilliseconds > 0
+                                ? duration.inMilliseconds.toDouble()
+                                : 1.0;
+                            final value = position.inMilliseconds
+                                .clamp(0, max)
+                                .toDouble();
+                            return Column(
+                              children: [
+                                Slider(
+                                  value: value,
+                                  max: max,
+                                  onChanged: duration.inMilliseconds > 0
+                                      ? (milliseconds) => player.seek(
+                                            Duration(
+                                              milliseconds:
+                                                  milliseconds.round(),
+                                            ),
+                                          )
+                                      : null,
+                                ),
+                                Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text(_formatMusicTime(position)),
+                                    Text(_formatMusicTime(duration)),
+                                  ],
+                                ),
+                              ],
+                            );
+                          },
                         ),
                         Row(
                           mainAxisAlignment: MainAxisAlignment.center,
@@ -1520,12 +1539,16 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen> {
                             const SizedBox(width: 20),
                             IconButton.filled(
                               iconSize: 38,
-                              onPressed: () => _player.playOrPause(),
-                              icon: Icon(_playing ? Icons.pause : Icons.play_arrow),
+                              onPressed: () => player.playOrPause(),
+                              icon: Icon(
+                                music.isPlaying
+                                    ? Icons.pause
+                                    : Icons.play_arrow,
+                              ),
                             ),
                             const SizedBox(width: 20),
                             IconButton(
-                              onPressed: _leave,
+                              onPressed: _stopAndLeave,
                               icon: const Icon(Icons.stop),
                               tooltip: 'Stop',
                             ),
