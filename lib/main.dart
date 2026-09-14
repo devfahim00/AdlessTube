@@ -29,7 +29,11 @@ class AdlessTubeApp extends StatelessWidget {
     return MaterialApp(
       title: 'AdlessTube',
       theme: ThemeData(useMaterial3: true, colorSchemeSeed: Colors.red),
-      darkTheme: ThemeData.dark(useMaterial3: true, colorSchemeSeed: Colors.red),
+      darkTheme: ThemeData(
+        useMaterial3: true,
+        brightness: Brightness.dark,
+        colorSchemeSeed: Colors.red,
+      ),
       themeMode: storage.themeMode,
       debugShowCheckedModeBanner: false,
       home: const _RootRouter(),

@@ -443,15 +443,15 @@ class _SearchScreenState extends State<SearchScreen>
                                     return VideoTile(
                                       video: _videos[i],
                                       onTap: () async {
-                                        final storage =
-                                            context.read<StorageService>();
-                                        await storage.addToHistory(_videos[i]);
-                                        if (context.mounted) {
+                                        final storage = context.read<StorageService>();
+                                        final video = _videos[i];
+                                        await storage.addToHistory(video);
+                                        if (mounted) {
                                           Navigator.push(
                                             context,
                                             MaterialPageRoute(
                                               builder: (_) => PlayerScreen(
-                                                  video: _videos[i]),
+                                                  video: video),
                                             ),
                                           );
                                         }
@@ -559,8 +559,11 @@ class _ChannelScreenState extends State<ChannelScreen>
     final loading = isVideos ? _loadingMoreVideos : _loadingMoreShorts;
     if (loading || next == null) return;
     setState(() {
-      if (isVideos) _loadingMoreVideos = true;
-      else _loadingMoreShorts = true;
+      if (isVideos) {
+        _loadingMoreVideos = true;
+      } else {
+        _loadingMoreShorts = true;
+      }
     });
     try {
       final page = await _service.getChannelTabPage(
@@ -578,8 +581,11 @@ class _ChannelScreenState extends State<ChannelScreen>
     } finally {
       if (mounted) {
         setState(() {
-          if (isVideos) _loadingMoreVideos = false;
-          else _loadingMoreShorts = false;
+          if (isVideos) {
+            _loadingMoreVideos = false;
+          } else {
+            _loadingMoreShorts = false;
+          }
         });
       }
     }
@@ -604,11 +610,12 @@ class _ChannelScreenState extends State<ChannelScreen>
             video: items[i],
             onTap: () async {
               final storage = context.read<StorageService>();
-              await storage.addToHistory(items[i]);
-              if (context.mounted) {
+              final video = items[i];
+              await storage.addToHistory(video);
+              if (mounted) {
                 Navigator.push(
                   context,
-                  MaterialPageRoute(builder: (_) => PlayerScreen(video: items[i])),
+                  MaterialPageRoute(builder: (_) => PlayerScreen(video: video)),
                 );
               }
             },
@@ -710,6 +717,7 @@ class PlayerScreen extends StatefulWidget {
 class _PlayerScreenState extends State<PlayerScreen> {
   late final Player _player;
   late final VideoController _controller;
+  late final StorageService _storage;
   final _service = NewPipeService();
 
   bool _loading = true;
@@ -726,6 +734,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   @override
   void initState() {
     super.initState();
+    _storage = context.read<StorageService>();
     _player = Player();
     _controller = VideoController(_player);
 
@@ -758,7 +767,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         });
         return;
       }
-      final saved = context.read<StorageService>().getPlaybackState(widget.video.id);
+      final saved = _storage.getPlaybackState(widget.video.id);
       final savedQuality = saved?['quality'];
       final savedFormat = saved?['format'];
       final savedPosition = Duration(
@@ -830,7 +839,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (stream == null) return;
     final currentPosition = position ?? _player.state.position;
     _lastSavedPosition = currentPosition;
-    unawaited(context.read<StorageService>().savePlaybackState(
+    unawaited(_storage.savePlaybackState(
           videoId: widget.video.id,
           position: currentPosition,
           quality: stream.quality,
@@ -851,8 +860,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
   @override
   void dispose() {
     _savePlaybackState();
-    _player.dispose();
+    unawaited(_player.stop());
+    unawaited(_player.dispose());
     super.dispose();
+  }
+
+  Future<void> _stopBeforeLeaving() async {
+    _savePlaybackState();
+    await _player.stop();
   }
 
   @override
@@ -1109,9 +1124,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   ],
                 ),
     );
-    return Platform.isAndroid
-        ? PipWidget(child: page, pipChild: playerOnly)
+    final pipPage = Platform.isAndroid
+        ? PipWidget(pipChild: playerOnly, child: page)
         : page;
+    return WillPopScope(
+      onWillPop: () async {
+        await _stopBeforeLeaving();
+        return true;
+      },
+      child: pipPage,
+    );
   }
 }
 
@@ -1389,14 +1411,14 @@ class _ShortsScreenState extends State<ShortsScreen> {
                           itemBuilder: (_, i) => VideoTile(
                             video: _shorts[i],
                             onTap: () async {
-                              await context
-                                  .read<StorageService>()
-                                  .addToHistory(_shorts[i]);
-                              if (context.mounted) {
+                              final storage = context.read<StorageService>();
+                              final video = _shorts[i];
+                              await storage.addToHistory(video);
+                              if (mounted) {
                                 Navigator.push(
                                   context,
                                   MaterialPageRoute(
-                                    builder: (_) => PlayerScreen(video: _shorts[i]),
+                                    builder: (_) => PlayerScreen(video: video),
                                   ),
                                 );
                               }

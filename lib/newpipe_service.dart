@@ -210,7 +210,7 @@ class NewPipeService {
 
     // ── Muxed streams ──
     try {
-      final muxedList = video.videoStreams ?? [];
+      final muxedList = video.videoStreams;
       for (final s in muxedList) {
         final url = s.url;
         if (url == null || url.isEmpty) continue;
