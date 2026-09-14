@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart' show ThemeMode;
 import 'package:hive_flutter/hive_flutter.dart';
 import 'models.dart';
 
@@ -9,6 +10,7 @@ class StorageService extends ChangeNotifier {
   static const _playbackBox = 'playback';
   static const _regionKey = 'region_code';
   static const _regionSelectedKey = 'region_selected';
+  static const _themeModeKey = 'theme_mode';
 
   Future<void> init() async {
     await Hive.initFlutter();
@@ -48,6 +50,25 @@ class StorageService extends ChangeNotifier {
 
   Future<void> clearHistory() async {
     await Hive.box(_historyBox).clear();
+    notifyListeners();
+  }
+
+  ThemeMode get themeMode {
+    final value = Hive.box(_settingsBox).get(_themeModeKey, defaultValue: 'auto');
+    return switch (value) {
+      'light' => ThemeMode.light,
+      'dark' => ThemeMode.dark,
+      _ => ThemeMode.system,
+    };
+  }
+
+  Future<void> setThemeMode(ThemeMode mode) async {
+    final value = switch (mode) {
+      ThemeMode.light => 'light',
+      ThemeMode.dark => 'dark',
+      ThemeMode.system => 'auto',
+    };
+    await Hive.box(_settingsBox).put(_themeModeKey, value);
     notifyListeners();
   }
 

@@ -25,9 +25,12 @@ class AdlessTubeApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final storage = context.watch<StorageService>();
     return MaterialApp(
       title: 'AdlessTube',
-      theme: ThemeData.dark(useMaterial3: true),
+      theme: ThemeData(useMaterial3: true, colorSchemeSeed: Colors.red),
+      darkTheme: ThemeData.dark(useMaterial3: true, colorSchemeSeed: Colors.red),
+      themeMode: storage.themeMode,
       debugShowCheckedModeBanner: false,
       home: const _RootRouter(),
     );

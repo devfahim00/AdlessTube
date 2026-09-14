@@ -1,9 +1,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
     <application
-        android:label="adlesstube"
+        android:label="AdlessTube"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@drawable/adless_logo"
+        android:roundIcon="@drawable/adless_logo">
         <activity
             android:name=".MainActivity"
             android:exported="true"

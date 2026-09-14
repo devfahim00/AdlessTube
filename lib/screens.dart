@@ -2,11 +2,13 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:android_pip/android_pip.dart';
+import 'package:android_pip/pip_widget.dart';
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:newpipeextractor_dart/newpipeextractor_dart.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'models.dart';
 import 'newpipe_service.dart';
 import 'storage_service.dart';
@@ -26,6 +28,7 @@ class _MainShellState extends State<MainShell> {
 
   final _pages = const [
     HomeScreen(),
+    ShortsScreen(),
     LibraryScreen(),
     MenuScreen(),
   ];
@@ -52,6 +55,7 @@ class _PillNavBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final items = [
       (Icons.home_outlined, Icons.home, 'Home'),
+      (Icons.play_circle_outline, Icons.play_circle_fill, 'Shorts'),
       (Icons.video_library_outlined, Icons.video_library, 'Library'),
       (Icons.menu, Icons.menu, 'Menu'),
     ];
@@ -717,6 +721,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   List<VideoItem> _related = [];
   bool _loadingRelated = false;
   Duration _lastSavedPosition = Duration.zero;
+  double _playbackSpeed = 1.0;
 
   @override
   void initState() {
@@ -800,6 +805,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _savePlaybackState(position);
   }
 
+  Future<void> _changeSpeed(double speed) async {
+    await _player.setRate(speed);
+    if (mounted) setState(() => _playbackSpeed = speed);
+  }
+
   Future<void> _enableAutoPip() async {
     try {
       await AndroidPIP().setAutoPipMode();
@@ -847,7 +857,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    final playerOnly = ColoredBox(
+      color: Colors.black,
+      child: Center(
+        child: AspectRatio(
+          aspectRatio: 16 / 9,
+          child: Video(controller: _controller),
+        ),
+      ),
+    );
+    final page = Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
         backgroundColor: Colors.black,
@@ -865,6 +884,19 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 } catch (_) {}
               },
             ),
+          PopupMenuButton<double>(
+            icon: const Icon(Icons.speed),
+            tooltip: 'Playback speed',
+            onSelected: _changeSpeed,
+            itemBuilder: (_) => [1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 4.0, 5.0]
+                .map((speed) => PopupMenuItem(
+                      value: speed,
+                      child: Text(
+                        '${_playbackSpeed == speed ? '✓  ' : '    '}${speed}x',
+                      ),
+                    ))
+                .toList(),
+          ),
           if (_currentStream != null)
             PopupMenuButton<VideoStreamInfo>(
               icon: const Icon(Icons.high_quality),
@@ -1077,6 +1109,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   ],
                 ),
     );
+    return Platform.isAndroid
+        ? PipWidget(child: page, pipChild: playerOnly)
+        : page;
   }
 }
 
@@ -1260,6 +1295,27 @@ class MenuScreen extends StatelessWidget {
               MaterialPageRoute(builder: (_) => const RegionChangeScreen()),
             ),
           ),
+          ListTile(
+            leading: const Icon(Icons.settings_outlined),
+            title: const Text('Settings'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const SettingsScreen()),
+            ),
+          ),
+          ListTile(
+            leading: const Icon(Icons.telegram, color: Color(0xFF229ED9)),
+            title: const Text('Join Telegram'),
+            subtitle: const Text('t.me/projectredfox'),
+            trailing: const Icon(Icons.open_in_new),
+            onTap: () async {
+              await launchUrl(
+                Uri.parse('https://t.me/projectredfox'),
+                mode: LaunchMode.externalApplication,
+              );
+            },
+          ),
           const Divider(),
           const Padding(
             padding: EdgeInsets.all(16),
@@ -1268,6 +1324,122 @@ class MenuScreen extends StatelessWidget {
               style: TextStyle(color: Colors.grey, fontSize: 12),
               textAlign: TextAlign.center,
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class ShortsScreen extends StatefulWidget {
+  const ShortsScreen({super.key});
+
+  @override
+  State<ShortsScreen> createState() => _ShortsScreenState();
+}
+
+class _ShortsScreenState extends State<ShortsScreen> {
+  final _service = NewPipeService();
+  List<VideoItem> _shorts = [];
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final storage = context.read<StorageService>();
+      final shorts = await _service.getShorts(
+        region: storage.regionCode,
+        subscribedChannels: storage.getSubscribedChannelUrls(),
+      );
+      if (mounted) setState(() => _shorts = shorts);
+    } catch (e) {
+      if (mounted) setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Shorts')),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : _error != null
+              ? ErrorView(message: _error!, onRetry: _load)
+              : RefreshIndicator(
+                  onRefresh: _load,
+                  child: _shorts.isEmpty
+                      ? ListView(children: const [
+                          SizedBox(height: 220),
+                          Center(child: Text('No shorts found')),
+                        ])
+                      : ListView.builder(
+                          itemCount: _shorts.length,
+                          itemBuilder: (_, i) => VideoTile(
+                            video: _shorts[i],
+                            onTap: () async {
+                              await context
+                                  .read<StorageService>()
+                                  .addToHistory(_shorts[i]);
+                              if (context.mounted) {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => PlayerScreen(video: _shorts[i]),
+                                  ),
+                                );
+                              }
+                            },
+                          ),
+                        ),
+                ),
+    );
+  }
+}
+
+class SettingsScreen extends StatelessWidget {
+  const SettingsScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final storage = context.watch<StorageService>();
+    return Scaffold(
+      appBar: AppBar(title: const Text('Settings')),
+      body: ListView(
+        children: [
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 20, 16, 8),
+            child: Text('Appearance', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+          RadioListTile<ThemeMode>(
+            value: ThemeMode.system,
+            groupValue: storage.themeMode,
+            title: const Text('Auto'),
+            subtitle: const Text('Use device setting'),
+            onChanged: (mode) => storage.setThemeMode(mode!),
+          ),
+          RadioListTile<ThemeMode>(
+            value: ThemeMode.light,
+            groupValue: storage.themeMode,
+            title: const Text('Light'),
+            onChanged: (mode) => storage.setThemeMode(mode!),
+          ),
+          RadioListTile<ThemeMode>(
+            value: ThemeMode.dark,
+            groupValue: storage.themeMode,
+            title: const Text('Dark'),
+            onChanged: (mode) => storage.setThemeMode(mode!),
           ),
         ],
       ),

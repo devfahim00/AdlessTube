@@ -98,6 +98,36 @@ class NewPipeService {
     }
   }
 
+  Future<List<VideoItem>> getShorts({
+    required String region,
+    List<String> subscribedChannels = const [],
+  }) async {
+    final seen = <String>{};
+    final shorts = <VideoItem>[];
+
+    void addAll(Iterable<VideoItem> items) {
+      for (final item in items) {
+        if (!item.isLive && seen.add(item.id)) shorts.add(item);
+      }
+    }
+
+    for (final url in subscribedChannels.take(4)) {
+      try {
+        final page = await getChannelTabPage(url, 'shorts');
+        addAll(page.items);
+      } catch (_) {}
+    }
+
+    final regionName = _regionToName(region);
+    for (final query in ['$regionName shorts', 'popular shorts $regionName']) {
+      try {
+        final page = await searchVideoPage(query);
+        addAll(page.items);
+      } catch (_) {}
+    }
+    return shorts;
+  }
+
   Future<({List<VideoItem> items, PageToken? next})> getChannelTabPage(
     String channelUrl,
     String tab, {
