@@ -1483,12 +1483,16 @@ class _ShortVideoPageState extends State<_ShortVideoPage> {
       if (widget.active) {
         await _player.play();
       }
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() => _loading = false);
+      }
     } catch (_) {
-      if (mounted) setState(() {
-        _loading = false;
-        _failed = true;
-      });
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _failed = true;
+        });
+      }
     }
   }
 
