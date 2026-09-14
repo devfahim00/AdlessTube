@@ -5,6 +5,7 @@ import 'models.dart';
 
 class StorageService extends ChangeNotifier {
   static const _historyBox = 'history';
+  static const _likedSongsBox = 'liked_songs';
   static const _subscriptionsBox = 'subscriptions';
   static const _settingsBox = 'settings';
   static const _playbackBox = 'playback';
@@ -16,6 +17,7 @@ class StorageService extends ChangeNotifier {
   Future<void> init() async {
     await Hive.initFlutter();
     await Hive.openBox(_historyBox);
+    await Hive.openBox(_likedSongsBox);
     await Hive.openBox(_subscriptionsBox);
     await Hive.openBox(_settingsBox);
     await Hive.openBox(_playbackBox);
@@ -51,6 +53,29 @@ class StorageService extends ChangeNotifier {
 
   Future<void> clearHistory() async {
     await Hive.box(_historyBox).clear();
+    notifyListeners();
+  }
+
+  // ─────────────────── Liked songs ───────────────────
+  List<VideoItem> getLikedSongs() {
+    return Hive.box(_likedSongsBox)
+        .values
+        .map((e) => VideoItem.fromMap(Map<String, dynamic>.from(e as Map)))
+        .toList()
+        .reversed
+        .toList();
+  }
+
+  bool isSongLiked(String videoId) =>
+      Hive.box(_likedSongsBox).containsKey(videoId);
+
+  Future<void> toggleLikedSong(VideoItem song) async {
+    final box = Hive.box(_likedSongsBox);
+    if (box.containsKey(song.id)) {
+      await box.delete(song.id);
+    } else {
+      await box.put(song.id, song.toMap());
+    }
     notifyListeners();
   }
 

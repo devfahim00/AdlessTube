@@ -130,6 +130,39 @@ class NewPipeService {
     return shorts;
   }
 
+  /// Builds a music discovery feed from the user's liked songs and region.
+  /// NewPipe does not expose account recommendations, so likes are the local
+  /// preference signal used to find related artists, tracks and mixes.
+  Future<List<VideoItem>> getMusicFeed({
+    required String region,
+    List<VideoItem> likedSongs = const [],
+  }) async {
+    final regionName = _regionToName(region);
+    final queries = <String>[
+      ...likedSongs
+          .where((song) => song.title.trim().isNotEmpty)
+          .take(3)
+          .map((song) => '${song.title} music'),
+      '$regionName popular music',
+      '$regionName new songs',
+    ];
+    final seen = <String>{};
+    final music = <VideoItem>[];
+
+    for (final query in queries) {
+      try {
+        final page = await searchVideoPage(query);
+        for (final item in page.items) {
+          if (!item.isLive && !item.isShort && seen.add(item.id)) {
+            music.add(item);
+          }
+        }
+      } catch (_) {}
+    }
+    music.shuffle();
+    return music;
+  }
+
   Future<({List<VideoItem> items, PageToken? next})> getChannelTabPage(
     String channelUrl,
     String tab, {
@@ -252,6 +285,21 @@ class NewPipeService {
     list.sort((a, b) =>
         _qualityRank(b.quality).compareTo(_qualityRank(a.quality)));
     return list;
+  }
+
+  /// Returns the extractor's highest-quality audio-only stream for Music.
+  Future<VideoStreamInfo?> getBestAudioStream(String videoUrl) async {
+    final video = await VideoExtractor.getStream(videoUrl);
+    final audio = video.audioWithHighestQuality;
+    final url = audio?.url;
+    if (url == null || url.isEmpty) return null;
+    final format = (audio?.formatSuffix ?? audio?.formatName ?? 'audio')
+        .toLowerCase();
+    return VideoStreamInfo(
+      url: url,
+      quality: 'Audio',
+      format: format,
+    );
   }
 
   Future<String?> getBestMuxedStreamUrl(String videoUrl) async {

@@ -79,7 +79,8 @@ class _MainShellState extends State<MainShell> {
     final page = switch (_index) {
       0 => _homeScreen,
       1 => const ShortsScreen(),
-      2 => _libraryScreen,
+      2 => const MusicScreen(),
+      3 => _libraryScreen,
       _ => MenuScreen(
           onCheckForUpdate: () => _checkForUpdate(showUpToDate: true)),
     };
@@ -116,6 +117,7 @@ class _PillNavBar extends StatelessWidget {
     final items = [
       (Icons.home_outlined, Icons.home, 'Home'),
       (Icons.play_circle_outline, Icons.play_circle_fill, 'Shorts'),
+      (Icons.music_note_outlined, Icons.music_note, 'Music'),
       (Icons.video_library_outlined, Icons.video_library, 'Library'),
       (Icons.menu, Icons.menu, 'Menu'),
     ];
@@ -1236,6 +1238,311 @@ class _PlayerScreenState extends State<PlayerScreen>
       child: pipPage,
     );
   }
+}
+
+/// ═══════════════════════ MUSIC ═══════════════════════
+class MusicScreen extends StatefulWidget {
+  const MusicScreen({super.key});
+
+  @override
+  State<MusicScreen> createState() => _MusicScreenState();
+}
+
+class _MusicScreenState extends State<MusicScreen> {
+  final _service = NewPipeService();
+  List<VideoItem> _songs = [];
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    if (mounted) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
+    try {
+      final storage = context.read<StorageService>();
+      final songs = await _service.getMusicFeed(
+        region: storage.regionCode,
+        likedSongs: storage.getLikedSongs(),
+      );
+      if (mounted) setState(() => _songs = songs);
+    } catch (e) {
+      if (mounted) setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final storage = context.watch<StorageService>();
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Music'),
+        actions: [
+          IconButton(
+            onPressed: _load,
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Refresh music',
+          ),
+        ],
+      ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : _error != null
+              ? ErrorView(message: _error!, onRetry: _load)
+              : RefreshIndicator(
+                  onRefresh: _load,
+                  child: ListView.builder(
+                    padding: const EdgeInsets.only(bottom: 96),
+                    itemCount: _songs.length,
+                    itemBuilder: (context, index) {
+                      final song = _songs[index];
+                      final liked = storage.isSongLiked(song.id);
+                      return ListTile(
+                        leading: ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: song.thumbnailUrl.isEmpty
+                              ? Container(
+                                  width: 52,
+                                  height: 52,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .surfaceContainerHighest,
+                                  child: const Icon(Icons.music_note),
+                                )
+                              : Image.network(
+                                  song.thumbnailUrl,
+                                  width: 52,
+                                  height: 52,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, __, ___) => Container(
+                                    width: 52,
+                                    height: 52,
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .surfaceContainerHighest,
+                                    child: const Icon(Icons.music_note),
+                                  ),
+                                ),
+                        ),
+                        title: Text(
+                          song.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        subtitle: Text(
+                          song.uploader,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        trailing: IconButton(
+                          onPressed: () => storage.toggleLikedSong(song),
+                          icon: Icon(
+                            liked ? Icons.favorite : Icons.favorite_border,
+                            color: liked ? Colors.red : null,
+                          ),
+                          tooltip: liked ? 'Remove from liked songs' : 'Like song',
+                        ),
+                        onTap: () async {
+                          await storage.addToHistory(song);
+                          if (!context.mounted) return;
+                          await Navigator.push<void>(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => MusicPlayerScreen(song: song),
+                            ),
+                          );
+                        },
+                      );
+                    },
+                  ),
+                ),
+    );
+  }
+}
+
+class MusicPlayerScreen extends StatefulWidget {
+  final VideoItem song;
+
+  const MusicPlayerScreen({super.key, required this.song});
+
+  @override
+  State<MusicPlayerScreen> createState() => _MusicPlayerScreenState();
+}
+
+class _MusicPlayerScreenState extends State<MusicPlayerScreen> {
+  final _service = NewPipeService();
+  late final Player _player;
+  late final StorageService _storage;
+  bool _loading = true;
+  bool _playing = false;
+  String? _error;
+  bool _leaving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _storage = context.read<StorageService>();
+    _player = Player();
+    _player.stream.playing.listen((playing) {
+      if (mounted) setState(() => _playing = playing);
+    });
+    _load();
+  }
+
+  Future<void> _load() async {
+    if (mounted) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
+    try {
+      final audio = await _service.getBestAudioStream(widget.song.url);
+      if (audio == null) {
+        throw Exception('No audio stream found for this song.');
+      }
+      await _player.open(Media(audio.url));
+      await _player.play();
+      if (mounted) setState(() => _loading = false);
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = e.toString();
+          _loading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _leave() async {
+    if (_leaving) return;
+    setState(() => _leaving = true);
+    await _player.stop();
+    if (mounted) Navigator.of(context).pop();
+  }
+
+  @override
+  void dispose() {
+    unawaited(_player.stop());
+    unawaited(_player.dispose());
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final liked = context.watch<StorageService>().isSongLiked(widget.song.id);
+    final navigator = Navigator.of(context);
+    return PopScope(
+      canPop: _leaving,
+      onPopInvokedWithResult: (didPop, _) async {
+        if (!didPop && !_leaving) {
+          setState(() => _leaving = true);
+          await _player.stop();
+          if (mounted) navigator.pop();
+        }
+      },
+      child: Scaffold(
+        appBar: AppBar(title: const Text('Now playing')),
+        body: _loading
+            ? const Center(child: CircularProgressIndicator())
+            : _error != null
+                ? ErrorView(message: _error!, onRetry: _load)
+                : Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(16),
+                          child: widget.song.thumbnailUrl.isEmpty
+                              ? Container(
+                                  width: 250,
+                                  height: 250,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .surfaceContainerHighest,
+                                  child: const Icon(Icons.music_note, size: 72),
+                                )
+                              : Image.network(
+                                  widget.song.thumbnailUrl,
+                                  width: 250,
+                                  height: 250,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, __, ___) => Container(
+                                    width: 250,
+                                    height: 250,
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .surfaceContainerHighest,
+                                    child: const Icon(Icons.music_note, size: 72),
+                                  ),
+                                ),
+                        ),
+                        const SizedBox(height: 28),
+                        Text(
+                          widget.song.title,
+                          maxLines: 2,
+                          textAlign: TextAlign.center,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.titleLarge,
+                        ),
+                        const SizedBox(height: 8),
+                        Text(widget.song.uploader),
+                        const SizedBox(height: 18),
+                        StreamBuilder<Duration>(
+                          stream: _player.stream.position,
+                          builder: (context, snapshot) => Text(
+                            _formatMusicTime(snapshot.data ?? Duration.zero),
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            IconButton(
+                              onPressed: () => _storage.toggleLikedSong(widget.song),
+                              icon: Icon(
+                                liked ? Icons.favorite : Icons.favorite_border,
+                                color: liked ? Colors.red : null,
+                              ),
+                              tooltip: liked ? 'Remove from liked songs' : 'Like song',
+                            ),
+                            const SizedBox(width: 20),
+                            IconButton.filled(
+                              iconSize: 38,
+                              onPressed: () => _player.playOrPause(),
+                              icon: Icon(_playing ? Icons.pause : Icons.play_arrow),
+                            ),
+                            const SizedBox(width: 20),
+                            IconButton(
+                              onPressed: _leave,
+                              icon: const Icon(Icons.stop),
+                              tooltip: 'Stop',
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+      ),
+    );
+  }
+}
+
+String _formatMusicTime(Duration duration) {
+  final minutes = duration.inMinutes;
+  final seconds = duration.inSeconds.remainder(60).toString().padLeft(2, '0');
+  return '$minutes:$seconds';
 }
 
 /// ═══════════════════════ LIBRARY ═══════════════════════
