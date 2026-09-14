@@ -1,9 +1,6 @@
 import 'package:newpipeextractor_dart/newpipeextractor_dart.dart';
 import 'models.dart';
 
-/// Search result type enum
-enum SearchType { video, channel }
-
 class NewPipeService {
   // ═══════════════════ SEARCH ═══════════════════
 
@@ -25,17 +22,15 @@ class NewPipeService {
     return channels.map(_toChannel).toList();
   }
 
-  // ═══════════════════ TRENDING (Region-aware) ═══════════════════
+  // ═══════════════════ TRENDING ═══════════════════
 
   Future<List<VideoItem>> getTrending({String region = 'US'}) async {
-    // region name থেকে query build করি
     final regionName = _regionToName(region);
     final queries = [
-      '$regionName trending videos',
+      '$regionName trending',
       '$regionName popular',
       '$regionName news',
       '$regionName music',
-      '$regionName songs',
     ];
 
     final Set<String> seen = {};
@@ -63,13 +58,31 @@ class NewPipeService {
 
   // ═══════════════════ CHANNEL ═══════════════════
 
+  /// Channel uploads — multiple fallback method
   Future<List<VideoItem>> getChannelVideos(String channelUrl) async {
+    // ── Attempt 1: ChannelExtractor.getChannelUploads ──
     try {
       final result = await ChannelExtractor.getChannelUploads(channelUrl);
-      return result.items.map(_toVideo).where(_isPlayable).toList();
-    } catch (_) {
-      return [];
-    }
+      final items = result.items.map(_toVideo).where(_isPlayable).toList();
+      if (items.isNotEmpty) return items;
+    } catch (_) {}
+
+    // ── Attempt 2: ServiceExtractor.getChannelUploads (0 = YouTube) ──
+    try {
+      final result = await ServiceExtractor.getChannelUploads(0, channelUrl);
+      final items = result.items.map(_toVideo).where(_isPlayable).toList();
+      if (items.isNotEmpty) return items;
+    } catch (_) {}
+
+    // ── Attempt 3: Channel info + related extraction ──
+    try {
+      final channel = await ChannelExtractor.getChannel(channelUrl);
+      final items =
+          channel.relatedStreams.map(_toVideo).where(_isPlayable).toList();
+      if (items.isNotEmpty) return items;
+    } catch (_) {}
+
+    return [];
   }
 
   // ═══════════════════ RELATED ═══════════════════
@@ -83,44 +96,83 @@ class NewPipeService {
     }
   }
 
-  // ═══════════════════ STREAMS (max quality) ═══════════════════
+  // ═══════════════════ STREAMS (HD via video+audio merge) ═══════════════════
 
-  /// সব available muxed stream + fallback।
-  /// YouTube সাধারণত 360p এর বেশি muxed দেয় না,
-  /// তাই max quality পেতে video-only + audio merge দরকার।
-  /// এখানে আমরা সব muxed + video-only option list করছি।
+  /// সব available quality level return করে।
+  /// প্রতিটা level এ video URL এবং audio URL আলাদা করে দেয়,
+  /// যাতে Player.open([video, audio]) merge করতে পারে।
   Future<List<VideoStreamInfo>> getAvailableStreams(String videoUrl) async {
     final video = await VideoExtractor.getStream(videoUrl);
-    final Map<String, VideoStreamInfo> unique = {};
 
-    // ── Muxed streams ──
-    final muxedStreams = video.videoStreams ?? [];
-    for (final s in muxedStreams) {
-      final url = s.url;
-      if (url == null || url.isEmpty) continue;
-      final q = _normalizeQuality(s.resolution);
-      unique[q] = VideoStreamInfo(
-        url: url,
-        quality: q,
-        format: 'muxed',
-      );
-    }
+    // ── Audio stream collect (best audio) ──
+    // Prefer muxed এর ভেতরে audio থাকে, কিন্তু video-only এর সাথে audio merge করতে হবে
+    String? bestAudioUrl;
+    try {
+      final audioStreams = video.audioStreams ?? [];
+      if (audioStreams.isNotEmpty) {
+        // Highest bitrate audio খুঁজি
+        final sorted = audioStreams.toList()
+          ..sort((a, b) => (b.bitrate ?? 0).compareTo(a.bitrate ?? 0));
+        bestAudioUrl = sorted.first.url;
+      } else {
+        final audio = video.audioWithHighestQuality;
+        bestAudioUrl = audio?.url;
+      }
+    } catch (_) {}
 
-    // ── videoWithHighestQuality fallback ──
-    if (unique.isEmpty) {
-      final muxed = video.videoWithHighestQuality;
-      final muxedUrl = muxed?.url;
-      if (muxedUrl != null && muxedUrl.isNotEmpty) {
-        final q = _normalizeQuality(muxed?.resolution);
-        unique[q] = VideoStreamInfo(
-          url: muxedUrl,
+    // ── Muxed streams (সাধারণত 360p max) ──
+    final Map<String, VideoStreamInfo> result = {};
+
+    try {
+      final muxedList = video.videoStreams ?? [];
+      for (final s in muxedList) {
+        final url = s.url;
+        if (url == null || url.isEmpty) continue;
+        final q = _normalizeQuality(s.resolution);
+        result[q] = VideoStreamInfo(
+          url: url,
           quality: q,
           format: 'muxed',
         );
       }
+    } catch (_) {}
+
+    // ── Video-only streams (HD possible) — audio merge করব ──
+    try {
+      final videoOnly = video.videoOnlyStreams ?? [];
+      for (final s in videoOnly) {
+        final vUrl = s.url;
+        if (vUrl == null || vUrl.isEmpty) continue;
+        final q = _normalizeQuality(s.resolution);
+        // muxed এ same quality না থাকলে video-only add করি
+        if (!result.containsKey(q)) {
+          result[q] = VideoStreamInfo(
+            url: vUrl,
+            quality: q,
+            format: 'video-only',
+            audioUrl: bestAudioUrl,
+          );
+        }
+      }
+    } catch (_) {}
+
+    // ── videoWithHighestQuality fallback ──
+    if (result.isEmpty) {
+      try {
+        final muxed = video.videoWithHighestQuality;
+        final muxedUrl = muxed.url;
+        if (muxedUrl.isNotEmpty) {
+          final q = _normalizeQuality(muxed.resolution);
+          result[q] = VideoStreamInfo(
+            url: muxedUrl,
+            quality: q,
+            format: 'muxed',
+          );
+        }
+      } catch (_) {}
     }
 
-    final list = unique.values.toList();
+    final list = result.values.toList();
     list.sort((a, b) =>
         _qualityRank(b.quality).compareTo(_qualityRank(a.quality)));
     return list;
@@ -137,10 +189,8 @@ class NewPipeService {
   String _normalizeQuality(String? raw) {
     if (raw == null || raw.isEmpty) return 'auto';
     final lower = raw.toLowerCase().trim();
-    // "720p" / "720p60" → "720p"
     final match = RegExp(r'(\d{3,4})p').firstMatch(lower);
     if (match != null) return '${match.group(1)}p';
-    // "1080" → "1080p"
     final numMatch = RegExp(r'^(\d{3,4})$').firstMatch(lower);
     if (numMatch != null) return '${numMatch.group(1)}p';
     return raw;
@@ -159,11 +209,9 @@ class NewPipeService {
     return 0;
   }
 
-  /// ⚠️ শুধুমাত্র সেগুলো return করি যেগুলো live না এবং playable
   bool _isPlayable(VideoItem v) {
     if (v.isLive) return false;
     if (v.id.isEmpty) return false;
-    // duration 0 বা null হলে live/short হতে পারে
     if (v.duration == null) return false;
     if (v.duration!.inSeconds == 0) return false;
     return true;
@@ -225,11 +273,8 @@ class NewPipeService {
   }
 
   bool _detectLive(String title, Duration? duration) {
-    // duration null → live/short
     if (duration == null) return true;
-    // duration 0 → live
     if (duration.inSeconds == 0) return true;
-    // title keyword check
     final upper = title.toUpperCase();
     if (upper.contains('LIVE') ||
         upper.contains('🔴') ||
