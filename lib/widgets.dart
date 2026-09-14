@@ -61,7 +61,42 @@ class VideoTile extends StatelessWidget {
   }
 }
 
-/// Subscribe / Unsubscribe button (channel name এর পাশে)
+class ChannelTile extends StatelessWidget {
+  final ChannelItem channel;
+  final VoidCallback onTap;
+
+  const ChannelTile({super.key, required this.channel, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      leading: CircleAvatar(
+        radius: 26,
+        backgroundColor: Colors.grey[800],
+        backgroundImage: channel.thumbnailUrl.isNotEmpty
+            ? NetworkImage(channel.thumbnailUrl)
+            : null,
+        child: channel.thumbnailUrl.isEmpty
+            ? Text(
+                channel.name.isNotEmpty
+                    ? channel.name[0].toUpperCase()
+                    : '?',
+                style: const TextStyle(fontSize: 20),
+              )
+            : null,
+      ),
+      title: Text(channel.name,
+          style: const TextStyle(fontWeight: FontWeight.w600)),
+      subtitle: channel.subscriberCount != null
+          ? Text('${channel.subscriberCount} subscribers',
+              style: TextStyle(color: Colors.grey[500], fontSize: 12))
+          : null,
+      trailing: const Icon(Icons.chevron_right),
+      onTap: onTap,
+    );
+  }
+}
+
 class SubscribeButton extends StatelessWidget {
   final String channelUrl;
   final String channelName;
@@ -84,7 +119,9 @@ class SubscribeButton extends StatelessWidget {
     return compact
         ? IconButton(
             icon: Icon(
-              isSubscribed ? Icons.notifications_active : Icons.notifications_none,
+              isSubscribed
+                  ? Icons.notifications_active
+                  : Icons.notifications_none,
               color: isSubscribed ? Colors.red : Colors.grey,
             ),
             tooltip: isSubscribed ? 'Unsubscribe' : 'Subscribe',
@@ -94,19 +131,25 @@ class SubscribeButton extends StatelessWidget {
               thumbnail: thumbnail,
             ),
           )
-        : ElevatedButton.icon(
-            onPressed: () => storage.toggleSubscribe(
-              channelUrl: channelUrl,
-              channelName: channelName,
-              thumbnail: thumbnail,
-            ),
-            icon: Icon(isSubscribed ? Icons.check : Icons.add),
-            label: Text(isSubscribed ? 'Subscribed' : 'Subscribe'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: isSubscribed ? Colors.grey[800] : Colors.red,
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(20),
+        : Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: ElevatedButton.icon(
+              onPressed: () => storage.toggleSubscribe(
+                channelUrl: channelUrl,
+                channelName: channelName,
+                thumbnail: thumbnail,
+              ),
+              icon: Icon(isSubscribed ? Icons.check : Icons.add, size: 18),
+              label: Text(isSubscribed ? 'Subscribed' : 'Subscribe'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor:
+                    isSubscribed ? Colors.grey[800] : Colors.red,
+                foregroundColor: Colors.white,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(20),
+                ),
               ),
             ),
           );
