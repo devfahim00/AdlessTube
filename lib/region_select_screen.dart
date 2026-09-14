@@ -16,6 +16,12 @@ class _RegionSelectScreenState extends State<RegionSelectScreen> {
   String _search = '';
 
   @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final filtered = RegionService.regions.where((r) {
       if (_search.isEmpty) return true;
@@ -72,15 +78,7 @@ class _RegionSelectScreenState extends State<RegionSelectScreen> {
                   onPressed: _selected == null
                       ? null
                       : () async {
-                          final storage = context.read<StorageService>();
-                          await storage.setRegion(_selected!);
-                          if (mounted) {
-                            Navigator.of(context).pushReplacement(
-                              MaterialPageRoute(
-                                builder: (_) => const _LoadHome(),
-                              ),
-                            );
-                          }
+                          await context.read<StorageService>().setRegion(_selected!);
                         },
                   style: ElevatedButton.styleFrom(
                     padding: const EdgeInsets.symmetric(vertical: 16),
@@ -92,43 +90,6 @@ class _RegionSelectScreenState extends State<RegionSelectScreen> {
           ),
         ],
       ),
-    );
-  }
-}
-
-/// Region select এর পর Home এ navigate করার জন্য wrapper
-class _LoadHome extends StatelessWidget {
-  const _LoadHome();
-
-  @override
-  Widget build(BuildContext context) {
-    // screens.dart থেকে HomeScreen import করতে হবে
-    return const _HomeLoader();
-  }
-}
-
-class _HomeLoader extends StatelessWidget {
-  const _HomeLoader();
-
-  @override
-  Widget build(BuildContext context) {
-    // Lazy import เพื่อ avoid circular dependency
-    return const _LazyHome();
-  }
-}
-
-class _LazyHome extends StatelessWidget {
-  const _LazyHome();
-
-  @override
-  Widget build(BuildContext context) {
-    return Builder(
-      builder: (ctx) {
-        // dynamic navigation — main.dart এ HomeScreen already loaded
-        return Navigator.of(ctx).widget.pages.isNotEmpty
-            ? const SizedBox()
-            : const SizedBox();
-      },
     );
   }
 }
