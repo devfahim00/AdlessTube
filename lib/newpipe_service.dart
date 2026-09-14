@@ -9,9 +9,7 @@ class NewPipeService {
       [SearchFilter.videos.value],
     );
 
-    // response.result কখনো null হয় না, তাই সরাসরি ব্যবহার
-    final searchResult = response.result;
-    final videos = searchResult?.videos ?? [];
+    final videos = response.result.videos;
     return videos
         .map(_toVideo)
         .where((v) => !v.isLive)
@@ -47,7 +45,7 @@ class NewPipeService {
           q,
           [SearchFilter.videos.value],
         );
-        final vids = res.result?.videos ?? [];
+        final vids = res.result.videos;
         for (final v in vids) {
           final item = _toVideo(v);
           if (!item.isLive && !seen.contains(item.id)) {
@@ -99,14 +97,11 @@ class NewPipeService {
     }
   }
 
-  /// ─── Related videos (video page এর নিচে) ───
-  /// ServiceExtractor.getRelatedItems ব্যবহার করে।
-  /// YouTube এর serviceId = 0
+  /// ─── Related videos ───
   Future<List<VideoItem>> getRelatedVideos(String videoUrl) async {
     try {
       final response = await ServiceExtractor.getRelatedItems(0, videoUrl);
-      // response একটি SearchResult — videos property আছে
-      final videos = response.videos ?? [];
+      final videos = response.videos;
       return videos
           .map(_toVideo)
           .where((v) => !v.isLive && v.id.isNotEmpty)
@@ -116,7 +111,8 @@ class NewPipeService {
     }
   }
 
-  /// ─── সব quality stream URL পাওয়া (muxed + video-only) ───
+  /// ─── সব quality stream URL পাওয়া ───
+  /// VideoStream model এ শুধু url আর resolution আছে, bitrate নেই।
   Future<List<VideoStreamInfo>> getAvailableStreams(String videoUrl) async {
     final video = await VideoExtractor.getStream(videoUrl);
     final streams = <VideoStreamInfo>[];
@@ -125,26 +121,27 @@ class NewPipeService {
     final videoStreams = video.videoStreams ?? [];
     for (final s in videoStreams) {
       final url = s.url;
-      if (url.isEmpty) continue;
-      final quality = s.resolution ?? _bitrateToQuality(s.bitrate);
+      if (url == null || url.isEmpty) continue;
+      final quality = s.resolution ?? 'auto';
       streams.add(VideoStreamInfo(
         url: url,
         quality: quality,
         format: 'muxed',
-        bitrate: s.bitrate,
       ));
     }
 
     // Muxed না থাকলে videoWithHighestQuality fallback
     if (streams.isEmpty) {
       final muxed = video.videoWithHighestQuality;
-      final muxedUrl = muxed.url;
-      if (muxedUrl != null && muxedUrl.isNotEmpty) {
-        streams.add(VideoStreamInfo(
-          url: muxedUrl,
-          quality: muxed.resolution ?? 'auto',
-          format: 'muxed',
-        ));
+      if (muxed != null) {
+        final muxedUrl = muxed.url;
+        if (muxedUrl != null && muxedUrl.isNotEmpty) {
+          streams.add(VideoStreamInfo(
+            url: muxedUrl,
+            quality: muxed.resolution ?? 'auto',
+            format: 'muxed',
+          ));
+        }
       }
     }
 
@@ -165,15 +162,6 @@ class NewPipeService {
     if (lower.contains('240')) return 240;
     if (lower.contains('144')) return 144;
     return 0;
-  }
-
-  String _bitrateToQuality(int? bitrate) {
-    if (bitrate == null) return 'auto';
-    if (bitrate > 4000000) return '1080p';
-    if (bitrate > 2000000) return '720p';
-    if (bitrate > 1000000) return '480p';
-    if (bitrate > 500000) return '360p';
-    return '240p';
   }
 
   /// ─── Backward-compatible ───
