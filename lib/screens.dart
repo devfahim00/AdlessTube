@@ -1350,6 +1350,14 @@ class _MusicScreenState extends State<MusicScreen> {
         title: const Text('Music'),
         actions: [
           IconButton(
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const MusicSearchScreen()),
+            ),
+            icon: const Icon(Icons.search),
+            tooltip: 'Search music',
+          ),
+          IconButton(
             onPressed: _showFavorites,
             icon: const Icon(Icons.favorite_outline),
             tooltip: 'Favourite songs',
@@ -1449,6 +1457,120 @@ class _MusicScreenState extends State<MusicScreen> {
               ),
             )
           : null,
+    );
+  }
+}
+
+class MusicSearchScreen extends StatefulWidget {
+  const MusicSearchScreen({super.key});
+
+  @override
+  State<MusicSearchScreen> createState() => _MusicSearchScreenState();
+}
+
+class _MusicSearchScreenState extends State<MusicSearchScreen> {
+  final _controller = TextEditingController();
+  final _service = NewPipeService();
+  List<VideoItem> _results = [];
+  bool _loading = false;
+  String? _error;
+
+  Future<void> _search() async {
+    final query = _controller.text.trim();
+    if (query.isEmpty) return;
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final results = await _service.searchVideos('$query music');
+      if (mounted) {
+        setState(() {
+          _results = results.where((song) => !song.isShort).toList();
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _openSong(VideoItem song) async {
+    final storage = context.read<StorageService>();
+    await storage.addToHistory(song);
+    if (!mounted) return;
+    context.read<MusicPlaybackService>().setQueue(_results, song);
+    await Navigator.push<void>(
+      context,
+      MaterialPageRoute(builder: (_) => MusicPlayerScreen(song: song)),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final storage = context.watch<StorageService>();
+    return Scaffold(
+      appBar: AppBar(
+        title: TextField(
+          controller: _controller,
+          autofocus: true,
+          textInputAction: TextInputAction.search,
+          onSubmitted: (_) => _search(),
+          decoration: const InputDecoration(
+            hintText: 'Search songs, artists or albums',
+            border: InputBorder.none,
+          ),
+        ),
+        actions: [
+          IconButton(
+            onPressed: _search,
+            icon: const Icon(Icons.search),
+            tooltip: 'Search',
+          ),
+        ],
+      ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : _error != null
+              ? ErrorView(message: _error!, onRetry: _search)
+              : _results.isEmpty
+                  ? const Center(child: Text('Search for music to get started'))
+                  : ListView.builder(
+                      padding: const EdgeInsets.only(bottom: 24),
+                      itemCount: _results.length,
+                      itemBuilder: (_, index) {
+                        final song = _results[index];
+                        final liked = storage.isSongLiked(song.id);
+                        return ListTile(
+                          leading: const Icon(Icons.music_note),
+                          title: Text(
+                            song.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          subtitle: Text(
+                            song.uploader,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          trailing: IconButton(
+                            onPressed: () => storage.toggleLikedSong(song),
+                            icon: Icon(
+                              liked ? Icons.favorite : Icons.favorite_border,
+                              color: liked ? Colors.red : null,
+                            ),
+                          ),
+                          onTap: () => _openSong(song),
+                        );
+                      },
+                    ),
     );
   }
 }
