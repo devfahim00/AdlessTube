@@ -4,12 +4,32 @@ import 'models.dart';
 
 class StorageService extends ChangeNotifier {
   static const _historyBox = 'history';
+  static const _subscriptionsBox = 'subscriptions';
+  static const _settingsBox = 'settings';
+  static const _regionKey = 'region_code';
+  static const _regionSelectedKey = 'region_selected';
 
   Future<void> init() async {
     await Hive.initFlutter();
     await Hive.openBox(_historyBox);
+    await Hive.openBox(_subscriptionsBox);
+    await Hive.openBox(_settingsBox);
   }
 
+  // ─────────── Region ───────────
+  bool get hasSelectedRegion =>
+      Hive.box(_settingsBox).get(_regionSelectedKey, defaultValue: false);
+
+  String get regionCode =>
+      Hive.box(_settingsBox).get(_regionKey, defaultValue: 'US');
+
+  Future<void> setRegion(String code) async {
+    await Hive.box(_settingsBox).put(_regionKey, code);
+    await Hive.box(_settingsBox).put(_regionSelectedKey, true);
+    notifyListeners();
+  }
+
+  // ─────────── History ───────────
   Future<void> addToHistory(VideoItem video) async {
     await Hive.box(_historyBox).put(video.id, video.toMap());
     notifyListeners();
@@ -28,4 +48,60 @@ class StorageService extends ChangeNotifier {
     await Hive.box(_historyBox).clear();
     notifyListeners();
   }
+
+  // ─────────── Subscriptions ───────────
+  /// Channel name → subscription info map
+  Map<String, Map<String, dynamic>> getSubscriptions() {
+    final box = Hive.box(_subscriptionsBox);
+    return {
+      for (var key in box.keys)
+        key.toString(): Map<String, dynamic>.from(box.get(key)),
+    };
+  }
+
+  bool isSubscribed(String channelUrl) {
+    return Hive.box(_subscriptionsBox).containsKey(channelUrl);
+  }
+
+  Future<void> subscribe({
+    required String channelUrl,
+    required String channelName,
+    String thumbnail = '',
+  }) async {
+    await Hive.box(_subscriptionsBox).put(channelUrl, {
+      'name': channelName,
+      'thumbnail': thumbnail,
+      'subscribedAt': DateTime.now().toIso8601String(),
+    });
+    notifyListeners();
+  }
+
+  Future<void> unsubscribe(String channelUrl) async {
+    await Hive.box(_subscriptionsBox).delete(channelUrl);
+    notifyListeners();
+  }
+
+  Future<void> toggleSubscribe({
+    required String channelUrl,
+    required String channelName,
+    String thumbnail = '',
+  }) async {
+    if (isSubscribed(channelUrl)) {
+      await unsubscribe(channelUrl);
+    } else {
+      await subscribe(
+        channelUrl: channelUrl,
+        channelName: channelName,
+        thumbnail: thumbnail,
+      );
+    }
+  }
+
+  List<String> getSubscribedChannelUrls() =>
+      Hive.box(_subscriptionsBox).keys.map((e) => e.toString()).toList();
+
+  List<String> getSubscribedChannelNames() => Hive.box(_subscriptionsBox)
+      .values
+      .map((e) => (e as Map)['name'].toString())
+      .toList();
 }
