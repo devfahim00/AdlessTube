@@ -682,7 +682,8 @@ class _ChannelScreenState extends State<ChannelScreen>
             },
           );
         },
-      );
+      ),
+    );
   }
 
   @override
@@ -717,7 +718,7 @@ class _ChannelScreenState extends State<ChannelScreen>
                     children: [
                       Text(
                         widget.channel.name,
-                          style: TextStyle(
+                          style: const TextStyle(
                           fontSize: 18,
                           fontWeight: FontWeight.bold,
                         ),
