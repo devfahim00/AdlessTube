@@ -26,17 +26,16 @@ class MainShell extends StatefulWidget {
 class _MainShellState extends State<MainShell> {
   int _index = 0;
 
-  final _pages = const [
-    HomeScreen(),
-    ShortsScreen(),
-    LibraryScreen(),
-    MenuScreen(),
-  ];
-
   @override
   Widget build(BuildContext context) {
+    final page = switch (_index) {
+      0 => const HomeScreen(),
+      1 => const ShortsScreen(),
+      2 => const LibraryScreen(),
+      _ => const MenuScreen(),
+    };
     return Scaffold(
-      body: IndexedStack(index: _index, children: _pages),
+      body: page,
       bottomNavigationBar: _PillNavBar(
         currentIndex: _index,
         onTap: (i) => setState(() => _index = i),
@@ -768,11 +767,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
       final saved = _storage.getPlaybackState(widget.video.id);
       final savedQuality = saved?['quality'];
       final savedFormat = saved?['format'];
+      final preferredQuality = _storage.defaultQuality;
       final savedPosition = Duration(
         milliseconds: (saved?['positionMs'] as int?) ?? 0,
       );
       _streams = streams;
-      _currentStream = streams.first;
+      _currentStream = _selectDefaultStream(streams, preferredQuality);
       for (final stream in streams) {
         if (stream.quality == savedQuality && stream.format == savedFormat) {
           _currentStream = stream;
@@ -810,6 +810,29 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
     setState(() => _currentStream = stream);
     _savePlaybackState(position);
+  }
+
+  VideoStreamInfo _selectDefaultStream(
+    List<VideoStreamInfo> streams,
+    String preference,
+  ) {
+    // "Auto" uses a connection-friendly 720p target instead of always
+    // starting the most bandwidth-intensive stream.
+    final target = preference == 'Auto'
+        ? 720
+        : int.tryParse(preference.replaceAll('p', '')) ?? 720;
+    final ranked = streams
+        .map((stream) => (stream: stream, rank: _qualityRank(stream.quality)))
+        .where((item) => item.rank > 0)
+        .toList();
+    final atOrBelowTarget = ranked.where((item) => item.rank <= target).toList();
+    if (atOrBelowTarget.isNotEmpty) return atOrBelowTarget.first.stream;
+    return ranked.isNotEmpty ? ranked.last.stream : streams.first;
+  }
+
+  int _qualityRank(String quality) {
+    final match = RegExp(r'(\d{3,4})').firstMatch(quality);
+    return match == null ? 0 : int.parse(match.group(1)!);
   }
 
   Future<void> _changeSpeed(double speed) async {
@@ -1472,10 +1495,22 @@ class _ShortVideoPageState extends State<_ShortVideoPage> {
 
   Future<void> _start() async {
     _started = true;
+    final preference = context.read<StorageService>().defaultQuality;
     try {
       final streams = await _service.getAvailableStreams(widget.video.url);
-      if (streams.isEmpty) throw StateError('No playable stream');
-      final stream = streams.first;
+      if (streams.isEmpty) {
+        throw StateError('No playable stream');
+      }
+      final target = preference == 'Auto'
+          ? 720
+          : int.tryParse(preference.replaceAll('p', '')) ?? 720;
+      final stream = streams.firstWhere(
+        (candidate) {
+          final match = RegExp(r'(\d{3,4})').firstMatch(candidate.quality);
+          return match != null && int.parse(match.group(1)!) <= target;
+        },
+        orElse: () => streams.last,
+      );
       await _player.open(Media(stream.url));
       if (stream.audioUrl != null) {
         await _player.setAudioTrack(AudioTrack.uri(stream.audioUrl!));
@@ -1586,6 +1621,32 @@ class SettingsScreen extends StatelessWidget {
             groupValue: storage.themeMode,
             title: const Text('Dark'),
             onChanged: (mode) => storage.setThemeMode(mode!),
+          ),
+          const Divider(),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 20, 16, 8),
+            child: Text('Playback', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+          ListTile(
+            leading: const Icon(Icons.high_quality),
+            title: const Text('Default video quality'),
+            subtitle: const Text('Uses the selected quality or the next lower one'),
+            trailing: DropdownButton<String>(
+              value: storage.defaultQuality,
+              underline: const SizedBox.shrink(),
+              items: const ['Auto', '144p', '240p', '360p', '480p', '720p',
+                '1080p', '1440p', '2160p']
+                  .map((quality) => DropdownMenuItem(
+                        value: quality,
+                        child: Text(quality),
+                      ))
+                  .toList(),
+              onChanged: (quality) {
+                if (quality != null) {
+                  storage.setDefaultQuality(quality);
+                }
+              },
+            ),
           ),
         ],
       ),

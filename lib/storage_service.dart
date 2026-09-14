@@ -11,6 +11,7 @@ class StorageService extends ChangeNotifier {
   static const _regionKey = 'region_code';
   static const _regionSelectedKey = 'region_selected';
   static const _themeModeKey = 'theme_mode';
+  static const _defaultQualityKey = 'default_quality';
 
   Future<void> init() async {
     await Hive.initFlutter();
@@ -69,6 +70,14 @@ class StorageService extends ChangeNotifier {
       ThemeMode.system => 'auto',
     };
     await Hive.box(_settingsBox).put(_themeModeKey, value);
+    notifyListeners();
+  }
+
+  String get defaultQuality => Hive.box(_settingsBox)
+      .get(_defaultQualityKey, defaultValue: 'Auto') as String;
+
+  Future<void> setDefaultQuality(String quality) async {
+    await Hive.box(_settingsBox).put(_defaultQualityKey, quality);
     notifyListeners();
   }
 
