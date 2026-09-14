@@ -241,4 +241,454 @@ class _SearchScreenState extends State<SearchScreen> {
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : _error !=
+          : _error != null
+              ? ErrorView(message: _error!, onRetry: _search)
+              : ListView.builder(
+                  itemCount: _results.length,
+                  itemBuilder: (_, i) => VideoTile(
+                    video: _results[i],
+                    onTap: () async {
+                      final storage = context.read<StorageService>();
+                      await storage.addToHistory(_results[i]);
+                      if (context.mounted) {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => PlayerScreen(video: _results[i]),
+                          ),
+                        );
+                      }
+                    },
+                  ),
+                ),
+    );
+  }
+}
+
+/// ═══════════════════ প্লেব্যাক পেজ — Quality change + Related videos ═══════════════════
+class PlayerScreen extends StatefulWidget {
+  final VideoItem video;
+  const PlayerScreen({super.key, required this.video});
+
+  @override
+  State<PlayerScreen> createState() => _PlayerScreenState();
+}
+
+class _PlayerScreenState extends State<PlayerScreen> {
+  late final Player _player;
+  late final VideoController _controller;
+  final _service = NewPipeService();
+
+  bool _loading = true;
+  String? _error;
+  bool _isPlaying = false;
+
+  List<VideoStreamInfo> _streams = [];
+  VideoStreamInfo? _currentStream;
+  List<VideoItem> _related = [];
+  bool _loadingRelated = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _player = Player();
+    _controller = VideoController(_player);
+
+    _player.stream.playing.listen((playing) {
+      if (mounted) setState(() => _isPlaying = playing);
+    });
+
+    _loadStreams();
+    _loadRelated();
+  }
+
+  Future<void> _loadStreams() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final streams = await _service.getAvailableStreams(widget.video.url);
+      if (streams.isEmpty) {
+        setState(() {
+          _error = 'No playable stream found.';
+          _loading = false;
+        });
+        return;
+      }
+      _streams = streams;
+      _currentStream = streams.first; // highest quality
+      await _player.open(Media(_currentStream!.url));
+      await _player.play();
+      setState(() => _loading = false);
+    } catch (e) {
+      setState(() {
+        _error = e.toString();
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _loadRelated() async {
+    setState(() => _loadingRelated = true);
+    try {
+      final rel = await _service.getRelatedVideos(widget.video.url);
+      setState(() => _related = rel);
+    } catch (_) {}
+    setState(() => _loadingRelated = false);
+  }
+
+  Future<void> _changeQuality(VideoStreamInfo stream) async {
+    final wasPlaying = _isPlaying;
+    await _player.open(Media(stream.url));
+    if (wasPlaying) await _player.play();
+    setState(() => _currentStream = stream);
+  }
+
+  void _openRelated(VideoItem v) async {
+    final storage = context.read<StorageService>();
+    await storage.addToHistory(v);
+    if (!mounted) return;
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (_) => PlayerScreen(video: v)),
+    );
+  }
+
+  @override
+  void dispose() {
+    _player.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        foregroundColor: Colors.white,
+        title: Text(widget.video.title,
+            maxLines: 1, overflow: TextOverflow.ellipsis),
+        actions: [
+          if (_currentStream != null)
+            PopupMenuButton<VideoStreamInfo>(
+              icon: const Icon(Icons.high_quality),
+              tooltip: 'Quality',
+              onSelected: _changeQuality,
+              itemBuilder: (_) => _streams.map((s) {
+                final isCurrent = s.quality == _currentStream!.quality;
+                return PopupMenuItem(
+                  value: s,
+                  child: Row(
+                    children: [
+                      Icon(
+                        isCurrent
+                            ? Icons.radio_button_checked
+                            : Icons.radio_button_unchecked,
+                        size: 18,
+                        color: isCurrent ? Colors.red : null,
+                      ),
+                      const SizedBox(width: 8),
+                      Text('${s.quality}  •  ${s.format}'),
+                    ],
+                  ),
+                );
+              }).toList(),
+            ),
+        ],
+      ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : _error != null
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.error_outline,
+                            size: 60, color: Colors.red),
+                        const SizedBox(height: 16),
+                        Text(_error!,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(color: Colors.white)),
+                        const SizedBox(height: 16),
+                        ElevatedButton(
+                            onPressed: _loadStreams,
+                            child: const Text('Retry')),
+                      ],
+                    ),
+                  ),
+                )
+              : Column(
+                  children: [
+                    AspectRatio(
+                      aspectRatio: 16 / 9,
+                      child: Video(
+                        controller: _controller,
+                        controls: AdaptiveVideoControls,
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 4),
+                      color: Colors.black,
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          IconButton(
+                            icon: Icon(_isPlaying
+                                ? Icons.pause
+                                : Icons.play_arrow),
+                            color: Colors.white,
+                            onPressed: () => _player.playOrPause(),
+                          ),
+                          if (_currentStream != null) ...[
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: Colors.grey[900],
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(
+                                _currentStream!.quality,
+                                style: const TextStyle(
+                                    color: Colors.white, fontSize: 12),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    Expanded(
+                      child: ListView(
+                        padding: EdgeInsets.zero,
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  widget.video.title,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                const SizedBox(height: 12),
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            widget.video.uploader,
+                                            style: TextStyle(
+                                                color: Colors.grey[300],
+                                                fontWeight: FontWeight.w500),
+                                          ),
+                                          if (widget.video.viewCount !=
+                                              null) ...[
+                                            const SizedBox(height: 2),
+                                            Text(
+                                              '${widget.video.viewCount} views',
+                                              style: TextStyle(
+                                                  color: Colors.grey[500],
+                                                  fontSize: 12),
+                                            ),
+                                          ],
+                                        ],
+                                      ),
+                                    ),
+                                    SubscribeButton(
+                                      channelUrl: widget.video.uploaderUrl,
+                                      channelName: widget.video.uploader,
+                                      thumbnail: widget.video.thumbnailUrl,
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                          const Divider(color: Colors.grey),
+                          const Padding(
+                            padding: EdgeInsets.fromLTRB(16, 12, 16, 8),
+                            child: Text(
+                              'Related videos',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                          if (_loadingRelated)
+                            const Padding(
+                              padding: EdgeInsets.all(16),
+                              child: Center(
+                                  child: CircularProgressIndicator()),
+                            )
+                          else if (_related.isEmpty)
+                            Padding(
+                              padding: const EdgeInsets.all(16),
+                              child: Text(
+                                'No related videos',
+                                style: TextStyle(color: Colors.grey[600]),
+                              ),
+                            )
+                          else
+                            ..._related.map(
+                              (v) => VideoTile(
+                                video: v,
+                                onTap: () => _openRelated(v),
+                              ),
+                            ),
+                          const SizedBox(height: 24),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+    );
+  }
+}
+
+/// ═══════════════════ লাইব্রেরি পেজ ═══════════════════
+class LibraryScreen extends StatefulWidget {
+  const LibraryScreen({super.key});
+
+  @override
+  State<LibraryScreen> createState() => _LibraryScreenState();
+}
+
+class _LibraryScreenState extends State<LibraryScreen>
+    with SingleTickerProviderStateMixin {
+  late TabController _tab;
+
+  @override
+  void initState() {
+    super.initState();
+    _tab = TabController(length: 2, vsync: this);
+  }
+
+  @override
+  void dispose() {
+    _tab.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Library'),
+        bottom: TabBar(
+          controller: _tab,
+          tabs: const [
+            Tab(text: 'History', icon: Icon(Icons.history)),
+            Tab(text: 'Subscriptions', icon: Icon(Icons.subscriptions)),
+          ],
+        ),
+      ),
+      body: TabBarView(
+        controller: _tab,
+        children: const [
+          _HistoryTab(),
+          _SubscriptionsTab(),
+        ],
+      ),
+    );
+  }
+}
+
+class _HistoryTab extends StatelessWidget {
+  const _HistoryTab();
+
+  @override
+  Widget build(BuildContext context) {
+    final storage = context.watch<StorageService>();
+    final history = storage.getHistory();
+
+    if (history.isEmpty) {
+      return const Center(child: Text('No history yet'));
+    }
+
+    return Column(
+      children: [
+        Align(
+          alignment: Alignment.centerRight,
+          child: IconButton(
+            icon: const Icon(Icons.delete_sweep),
+            onPressed: storage.clearHistory,
+            tooltip: 'Clear history',
+          ),
+        ),
+        Expanded(
+          child: ListView.builder(
+            itemCount: history.length,
+            itemBuilder: (_, i) => VideoTile(
+              video: history[i],
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => PlayerScreen(video: history[i]),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _SubscriptionsTab extends StatelessWidget {
+  const _SubscriptionsTab();
+
+  @override
+  Widget build(BuildContext context) {
+    final storage = context.watch<StorageService>();
+    final subs = storage.getSubscriptions();
+
+    if (subs.isEmpty) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: Text(
+            'No subscriptions yet.\nSubscribe from any video to see channels here.',
+            textAlign: TextAlign.center,
+          ),
+        ),
+      );
+    }
+
+    return ListView.builder(
+      itemCount: subs.length,
+      itemBuilder: (_, i) {
+        final url = subs.keys.elementAt(i);
+        final data = subs[url]!;
+        return ListTile(
+          leading: CircleAvatar(
+            backgroundColor: Colors.red[900],
+            child: Text(
+              (data['name']?.toString() ?? '?')[0].toUpperCase(),
+              style: const TextStyle(color: Colors.white),
+            ),
+          ),
+          title: Text(data['name']?.toString() ?? 'Unknown'),
+          trailing: IconButton(
+            icon: const Icon(Icons.delete_outline),
+            onPressed: () => storage.unsubscribe(url),
+          ),
+        );
+      },
+    );
+  }
+}
