@@ -4,6 +4,8 @@ import 'package:provider/provider.dart';
 import 'models.dart';
 import 'storage_service.dart';
 
+/// Compact horizontal video row used in search results, related videos,
+/// channel listings and history.
 class VideoTile extends StatelessWidget {
   final VideoItem video;
   final VoidCallback onTap;
@@ -50,7 +52,7 @@ class VideoTile extends StatelessWidget {
                           padding: const EdgeInsets.symmetric(
                               horizontal: 4, vertical: 2),
                           child: Text(
-                            _formatDuration(video.duration!),
+                            formatDuration(video.duration!),
                             style: const TextStyle(
                                 color: Colors.white,
                                 fontSize: 11,
@@ -88,14 +90,192 @@ class VideoTile extends StatelessWidget {
   }
 }
 
-String _formatDuration(Duration duration) {
-  if (duration.isNegative) return '';
-  final minutes = duration.inMinutes;
-  final seconds = duration.inSeconds.remainder(60).toString().padLeft(2, '0');
-  if (minutes >= 60) {
-    return '${minutes ~/ 60}:${(minutes % 60).toString().padLeft(2, '0')}:$seconds';
+/// Big YouTube-style home tile: full-width thumbnail with the title and
+/// channel info underneath.
+class YouTubeVideoTile extends StatelessWidget {
+  final VideoItem video;
+  final VoidCallback onTap;
+
+  const YouTubeVideoTile({super.key, required this.video, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final subtitle = [
+      if (video.uploader.isNotEmpty) video.uploader,
+      if (video.viewCount != null) '${formatViews(video.viewCount)} views',
+    ].join(' • ');
+
+    return InkWell(
+      onTap: onTap,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          AspectRatio(
+            aspectRatio: 16 / 9,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                CachedNetworkImage(
+                  imageUrl: video.thumbnailUrl,
+                  fit: BoxFit.cover,
+                  placeholder: (_, __) => Container(
+                    color: theme.colorScheme.surfaceContainerHighest,
+                  ),
+                  errorWidget: (_, __, ___) => Container(
+                    color: theme.colorScheme.surfaceContainerHighest,
+                    child: const Icon(Icons.broken_image, size: 44),
+                  ),
+                ),
+                if (video.duration != null &&
+                    video.duration!.inSeconds > 0)
+                  Positioned(
+                    right: 8,
+                    bottom: 8,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.8),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 5, vertical: 2),
+                        child: Text(
+                          formatDuration(video.duration!),
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 14),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                CircleAvatar(
+                  radius: 17,
+                  backgroundColor: theme.colorScheme.primaryContainer,
+                  child: Text(
+                    video.uploader.isNotEmpty
+                        ? video.uploader[0].toUpperCase()
+                        : '?',
+                    style: TextStyle(
+                      color: theme.colorScheme.onPrimaryContainer,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        video.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 15,
+                          height: 1.25,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        subtitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: Colors.grey[500] ??
+                              theme.colorScheme.onSurfaceVariant,
+                          fontSize: 12.5,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
-  return '$minutes:$seconds';
+}
+
+/// Music row with thumbnail, title, uploader and a like button.
+class MusicListTile extends StatelessWidget {
+  final VideoItem song;
+  final bool liked;
+  final VoidCallback onTap;
+  final VoidCallback onToggleLike;
+
+  const MusicListTile({
+    super.key,
+    required this.song,
+    required this.liked,
+    required this.onTap,
+    required this.onToggleLike,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return ListTile(
+      leading: ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: song.thumbnailUrl.isEmpty
+            ? Container(
+                width: 52,
+                height: 52,
+                color: theme.colorScheme.surfaceContainerHighest,
+                child: const Icon(Icons.music_note),
+              )
+            : CachedNetworkImage(
+                imageUrl: song.thumbnailUrl,
+                width: 52,
+                height: 52,
+                fit: BoxFit.cover,
+                placeholder: (_, __) => Container(
+                  width: 52,
+                  height: 52,
+                  color: theme.colorScheme.surfaceContainerHighest,
+                ),
+                errorWidget: (_, __, ___) => Container(
+                  width: 52,
+                  height: 52,
+                  color: theme.colorScheme.surfaceContainerHighest,
+                  child: const Icon(Icons.music_note),
+                ),
+              ),
+      ),
+      title: Text(
+        song.title,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      subtitle: Text(
+        song.uploader,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      trailing: IconButton(
+        onPressed: onToggleLike,
+        icon: Icon(
+          liked ? Icons.favorite : Icons.favorite_border,
+          color: liked ? Colors.red : null,
+        ),
+        tooltip: liked ? 'Remove from liked songs' : 'Like song',
+      ),
+      onTap: onTap,
+    );
+  }
 }
 
 class ChannelTile extends StatelessWidget {
@@ -217,4 +397,323 @@ class ErrorView extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Live search suggestions shown while the user types.
+class SuggestionList extends StatelessWidget {
+  final List<String> suggestions;
+  final ValueChanged<String> onSelected;
+  final String hintText;
+
+  const SuggestionList({
+    super.key,
+    required this.suggestions,
+    required this.onSelected,
+    required this.hintText,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (suggestions.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text(
+            hintText,
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.grey[500]),
+          ),
+        ),
+      );
+    }
+    return ListView.builder(
+      itemCount: suggestions.length,
+      itemBuilder: (context, index) => ListTile(
+        dense: true,
+        leading: const Icon(Icons.search),
+        title: Text(
+          suggestions[index],
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        onTap: () => onSelected(suggestions[index]),
+      ),
+    );
+  }
+}
+
+// ═══════════════════════ SKELETONS ═══════════════════════
+
+/// One animated shimmer placeholder box. Needs a repeating [Animation]
+/// (owned by the skeleton screen) so only one ticker runs per screen.
+class ShimmerBox extends StatelessWidget {
+  final Animation<double> animation;
+  final double? width;
+  final double height;
+  final BorderRadius? borderRadius;
+
+  const ShimmerBox({
+    super.key,
+    required this.animation,
+    required this.height,
+    this.width,
+    this.borderRadius,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final base = isDark ? const Color(0xFF232323) : Colors.grey.shade300;
+    final highlight = isDark ? const Color(0xFF3C3C3C) : Colors.grey.shade100;
+    return AnimatedBuilder(
+      animation: animation,
+      builder: (context, child) {
+        final t = animation.value;
+        return Container(
+          width: width,
+          height: height,
+          decoration: BoxDecoration(
+            borderRadius: borderRadius ?? BorderRadius.circular(8),
+            gradient: LinearGradient(
+              begin: Alignment(-2.0 + 4.0 * t, 0),
+              end: Alignment(-1.0 + 4.0 * t, 0),
+              colors: [base, highlight, base],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Skeleton for the YouTube-style home feed (big tiles).
+class VideoFeedSkeleton extends StatefulWidget {
+  final int count;
+
+  const VideoFeedSkeleton({super.key, this.count = 4});
+
+  @override
+  State<VideoFeedSkeleton> createState() => _VideoFeedSkeletonState();
+}
+
+class _VideoFeedSkeletonState extends State<VideoFeedSkeleton>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller =
+      AnimationController(vsync: this, duration: const Duration(milliseconds: 1300))
+        ..repeat();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: EdgeInsets.zero,
+      children: List.generate(widget.count, (_) => Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              AspectRatio(
+                aspectRatio: 16 / 9,
+                child: ShimmerBox(
+                  animation: _controller,
+                  width: double.infinity,
+                  height: double.infinity,
+                  borderRadius: BorderRadius.zero,
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 14),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    ShimmerBox(
+                      animation: _controller,
+                      width: 34,
+                      height: 34,
+                      borderRadius: BorderRadius.circular(17),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          ShimmerLine(animation: _controller, height: 15),
+                          const SizedBox(height: 8),
+                          ShimmerLine(animation: _controller, height: 12, width: 130),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          )),
+    );
+  }
+}
+
+/// Skeleton for compact list rows (search results, related lists).
+class ListSkeleton extends StatefulWidget {
+  final int count;
+
+  const ListSkeleton({super.key, this.count = 8});
+
+  @override
+  State<ListSkeleton> createState() => _ListSkeletonState();
+}
+
+class _ListSkeletonState extends State<ListSkeleton>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller =
+      AnimationController(vsync: this, duration: const Duration(milliseconds: 1300))
+        ..repeat();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      itemCount: widget.count,
+      itemBuilder: (context, index) => Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Row(
+          children: [
+            ShimmerBox(
+              animation: _controller,
+              width: 140,
+              height: 80,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  ShimmerLine(animation: _controller, height: 15),
+                  const SizedBox(height: 8),
+                  ShimmerLine(animation: _controller, height: 12, width: 120),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Skeleton for music rows (square thumb + two lines).
+class MusicListSkeleton extends StatefulWidget {
+  final int count;
+
+  const MusicListSkeleton({super.key, this.count = 10});
+
+  @override
+  State<MusicListSkeleton> createState() => _MusicListSkeletonState();
+}
+
+class _MusicListSkeletonState extends State<MusicListSkeleton>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller =
+      AnimationController(vsync: this, duration: const Duration(milliseconds: 1300))
+        ..repeat();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      itemCount: widget.count,
+      itemBuilder: (context, index) => Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Row(
+          children: [
+            ShimmerBox(
+              animation: _controller,
+              width: 52,
+              height: 52,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  ShimmerLine(animation: _controller, height: 14),
+                  const SizedBox(height: 8),
+                  ShimmerLine(animation: _controller, height: 11, width: 100),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// A single shimmer text line with a random-ish width so rows do not look
+/// copy-pasted.
+class ShimmerLine extends StatelessWidget {
+  final Animation<double> animation;
+  final double height;
+  final double? width;
+
+  const ShimmerLine({
+    super.key,
+    required this.animation,
+    required this.height,
+    this.width,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // Deterministic pseudo-random width from the animation identity.
+    final seed = identityHashCode(this) % 60;
+    final w = width ?? (200.0 + seed.toDouble());
+    return ShimmerBox(
+      animation: animation,
+      width: w,
+      height: height,
+      borderRadius: BorderRadius.circular(4),
+    );
+  }
+}
+
+// ═══════════════════════ FORMATTERS ═══════════════════════
+
+String formatDuration(Duration duration) {
+  if (duration.isNegative) return '';
+  final minutes = duration.inMinutes;
+  final seconds = duration.inSeconds.remainder(60).toString().padLeft(2, '0');
+  if (minutes >= 60) {
+    return '${minutes ~/ 60}:${(minutes % 60).toString().padLeft(2, '0')}:$seconds';
+  }
+  return '$minutes:$seconds';
+}
+
+/// 1234567 → "1.2M", 45200 → "45K"
+String formatViews(int? count) {
+  if (count == null) return '';
+  if (count >= 1000000000) {
+    return '${(count / 1000000000).toStringAsFixed(1).replaceAll(RegExp(r'\.0$'), '')}B';
+  }
+  if (count >= 1000000) {
+    return '${(count / 1000000).toStringAsFixed(1).replaceAll(RegExp(r'\.0$'), '')}M';
+  }
+  if (count >= 1000) {
+    return '${(count / 1000).toStringAsFixed(1).replaceAll(RegExp(r'\.0$'), '')}K';
+  }
+  return count.toString();
 }

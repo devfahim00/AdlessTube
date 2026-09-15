@@ -54,6 +54,36 @@ class NewPipeService {
 
   // ═══════════════════ TRENDING ═══════════════════
 
+  /// Search queries that back the home feed. The home screen pages through
+  /// these round-robin so the feed can grow endlessly while scrolling.
+  List<String> trendingQueries(String region) {
+    final regionName = _regionToName(region);
+    return [
+      '$regionName trending',
+      '$regionName popular videos',
+      '$regionName news',
+      '$regionName music videos',
+      '$regionName viral videos',
+    ];
+  }
+
+  /// Search queries that back the music feed, seeded from liked songs.
+  List<String> musicQueries({
+    required String region,
+    List<VideoItem> likedSongs = const [],
+  }) {
+    final regionName = _regionToName(region);
+    return [
+      ...likedSongs
+          .where((song) => song.title.trim().isNotEmpty)
+          .take(3)
+          .map((song) => '${song.title} music'),
+      '$regionName popular music',
+      '$regionName new songs',
+      '$regionName top songs',
+    ];
+  }
+
   Future<List<VideoItem>> getTrending({String region = 'US'}) async {
     final regionName = _regionToName(region);
     final queries = [

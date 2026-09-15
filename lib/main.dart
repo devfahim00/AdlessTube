@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:provider/provider.dart';
-import 'screens.dart';
+
+import 'download_service.dart';
 import 'music_playback_service.dart';
-import 'storage_service.dart';
 import 'region_select_screen.dart';
+import 'screens/main_shell.dart';
 import 'service_select_screen.dart';
+import 'storage_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -14,12 +16,14 @@ void main() async {
   final storage = StorageService();
   await storage.init();
   final music = MusicPlaybackService(storage);
+  final downloads = DownloadService();
 
   runApp(
     MultiProvider(
       providers: [
         ChangeNotifierProvider.value(value: storage),
         ChangeNotifierProvider.value(value: music),
+        ChangeNotifierProvider.value(value: downloads),
       ],
       child: const AdlessTubeApp(),
     ),

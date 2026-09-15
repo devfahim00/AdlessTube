@@ -35,6 +35,11 @@ dependencies:
   url_launcher: ^6.3.1
   package_info_plus: 8.0.2
 
+  # Local file paths for downloads
+  path_provider: ^2.1.4
+  # Native share sheet (video links)
+  share_plus: ^10.0.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

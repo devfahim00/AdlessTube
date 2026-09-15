@@ -9,6 +9,8 @@ class StorageService extends ChangeNotifier {
   static const _subscriptionsBox = 'subscriptions';
   static const _settingsBox = 'settings';
   static const _playbackBox = 'playback';
+  static const _savedVideosBox = 'saved_videos';
+  static const _downloadsBoxName = 'downloads';
   static const _regionKey = 'region_code';
   static const _regionSelectedKey = 'region_selected';
   static const _themeModeKey = 'theme_mode';
@@ -29,6 +31,8 @@ class StorageService extends ChangeNotifier {
     await Hive.openBox(_subscriptionsBox);
     await Hive.openBox(_settingsBox);
     await Hive.openBox(_playbackBox);
+    await Hive.openBox(_savedVideosBox);
+    await Hive.openBox(_downloadsBoxName);
   }
 
   // ─────────── Region ───────────
@@ -87,6 +91,29 @@ class StorageService extends ChangeNotifier {
 
   Future<void> clearHistory() async {
     await Hive.box(_historyBox).clear();
+    notifyListeners();
+  }
+
+  // ─────────────────── Saved videos (bookmark) ───────────────────
+  List<VideoItem> getSavedVideos() {
+    return Hive.box(_savedVideosBox)
+        .values
+        .map((e) => VideoItem.fromMap(Map<String, dynamic>.from(e as Map)))
+        .toList()
+        .reversed
+        .toList();
+  }
+
+  bool isVideoSaved(String videoId) =>
+      Hive.box(_savedVideosBox).containsKey(videoId);
+
+  Future<void> toggleSavedVideo(VideoItem video) async {
+    final box = Hive.box(_savedVideosBox);
+    if (box.containsKey(video.id)) {
+      await box.delete(video.id);
+    } else {
+      await box.put(video.id, video.toMap());
+    }
     notifyListeners();
   }
 

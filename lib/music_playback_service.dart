@@ -121,6 +121,16 @@ class _AdlessAudioHandler extends BaseAudioHandler
   }
 }
 
+/// What the queue does when it reaches the last song.
+enum QueueRepeat {
+  /// Stop (or fall back to the global autoplay setting).
+  off,
+
+  /// Wrap back to the first song — used for favourites so only songs
+  /// from that list ever play.
+  loop,
+}
+
 /// Keeps Music playback in an Android media service with notification controls.
 class MusicPlaybackService extends ChangeNotifier {
   final NewPipeService _service = NewPipeService();
@@ -135,6 +145,8 @@ class MusicPlaybackService extends ChangeNotifier {
   List<VideoItem> _queue = [];
   int _queueIndex = -1;
   bool _handlingCompletion = false;
+  QueueRepeat _repeat = QueueRepeat.off;
+  bool _radio = false;
 
   MusicPlaybackService(this._storage);
 
@@ -165,7 +177,7 @@ class MusicPlaybackService extends ChangeNotifier {
       handler.playbackState.listen((state) {
         _playing = state.playing;
         if (state.processingState == AudioProcessingState.completed &&
-            _storage.musicAutoplay &&
+            (_storage.musicAutoplay || _radio) &&
             !_handlingCompletion) {
           _handlingCompletion = true;
           unawaited(next().whenComplete(() => _handlingCompletion = false));
@@ -195,6 +207,8 @@ class MusicPlaybackService extends ChangeNotifier {
   bool get isPlaying => _playing;
   bool get isLoading => _loading;
   String? get error => _error;
+  bool get isRadioActive => _radio;
+  QueueRepeat get repeatMode => _repeat;
   Stream<Duration> get positionStream =>
       _handler?.positionStream ?? Stream.value(Duration.zero);
   Stream<Duration?> get durationStream =>
@@ -202,6 +216,8 @@ class MusicPlaybackService extends ChangeNotifier {
   Duration get duration => _handler?.duration ?? Duration.zero;
   bool get canGoNext => _queueIndex >= 0 && _queueIndex < _queue.length - 1;
   bool get canGoPrevious => _queueIndex > 0;
+  int get queueLength => _queue.length;
+  int get queueIndex => _queueIndex;
 
   Future<void> playOrPause() async {
     final handler = await _getHandler();
@@ -213,16 +229,27 @@ class MusicPlaybackService extends ChangeNotifier {
     await handler.seek(position);
   }
 
-  void setQueue(List<VideoItem> songs, VideoItem selected) {
+  void setQueue(
+    List<VideoItem> songs,
+    VideoItem selected, {
+    QueueRepeat repeat = QueueRepeat.off,
+    bool radio = false,
+  }) {
     _queue = songs.where((song) => !song.isLive && !song.isShort).toList();
     _queueIndex = _queue.indexWhere((song) => song.id == selected.id);
     if (_queueIndex < 0) {
       _queue = [selected, ..._queue];
       _queueIndex = 0;
     }
+    _repeat = repeat;
+    _radio = radio;
   }
 
-  Future<void> play(VideoItem nextSong, {List<VideoItem>? queue}) async {
+  Future<void> play(
+    VideoItem nextSong, {
+    List<VideoItem>? queue,
+    String? localAudioPath,
+  }) async {
     if (queue != null) setQueue(queue, nextSong);
     _loading = true;
     _error = null;
@@ -239,9 +266,15 @@ class MusicPlaybackService extends ChangeNotifier {
         return;
       }
 
-      final audio = await _service.getBestAudioStream(nextSong.url);
-      if (audio == null) {
-        throw Exception('No audio stream found for this song.');
+      final Uri source;
+      if (localAudioPath != null) {
+        source = Uri.file(localAudioPath);
+      } else {
+        final audio = await _service.getBestAudioStream(nextSong.url);
+        if (audio == null) {
+          throw Exception('No audio stream found for this song.');
+        }
+        source = Uri.parse(audio.url);
       }
       await handler.load(
         MediaItem(
@@ -252,7 +285,7 @@ class MusicPlaybackService extends ChangeNotifier {
               ? null
               : Uri.tryParse(nextSong.thumbnailUrl),
         ),
-        Uri.parse(audio.url),
+        source,
       );
       await handler.play();
     } catch (e) {
@@ -268,7 +301,11 @@ class MusicPlaybackService extends ChangeNotifier {
     if (canGoNext) {
       _queueIndex++;
       await play(_queue[_queueIndex]);
-    } else if (_storage.musicAutoplay) {
+    } else if (_repeat == QueueRepeat.loop && _queue.isNotEmpty) {
+      // Favourites-style queues wrap around and never pull in outside songs.
+      _queueIndex = 0;
+      await play(_queue.first);
+    } else if (_radio || _storage.musicAutoplay) {
       await _playRelated();
     }
   }
@@ -277,6 +314,30 @@ class MusicPlaybackService extends ChangeNotifier {
     if (!canGoPrevious) return;
     _queueIndex--;
     await play(_queue[_queueIndex]);
+  }
+
+  /// Starts an endless radio: similar songs keep playing one after another.
+  /// The current song keeps playing; related songs become the upcoming queue.
+  Future<void> startRadio() async {
+    final current = _song;
+    _radio = true;
+    _repeat = QueueRepeat.off;
+    notifyListeners();
+    if (current == null) return;
+    try {
+      final related = await _service.getRelatedVideos(current.url);
+      final songs =
+          related.where((song) => !song.isLive && !song.isShort).toList();
+      if (songs.isEmpty) return;
+      _queue = [current, ...songs];
+      _queueIndex = 0;
+      notifyListeners();
+    } catch (_) {}
+  }
+
+  Future<void> stopRadio() async {
+    _radio = false;
+    notifyListeners();
   }
 
   Future<void> _playRelated() async {

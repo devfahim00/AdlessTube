@@ -80,3 +80,120 @@ class VideoStreamInfo {
     required this.format,
   });
 }
+
+/// What kind of file a download produces.
+enum DownloadType {
+  /// Muxed file (or paired video+audio files kept together).
+  videoAudio,
+  /// Video track only, without any audio.
+  videoOnly,
+  /// Audio track only, downloaded from the video player.
+  audio,
+  /// Audio track only, downloaded from the music player.
+  music,
+}
+
+class DownloadItem {
+  final String id;
+  final String videoId;
+  final String title;
+  final String uploader;
+  final String thumbnailUrl;
+  final String videoUrl;
+  final DownloadType type;
+  final String quality;
+  final String? videoPath;
+  final String? audioPath;
+  final int totalBytes;
+  final int receivedBytes;
+  /// downloading | completed | failed
+  final String status;
+  final DateTime createdAt;
+
+  DownloadItem({
+    required this.id,
+    required this.videoId,
+    required this.title,
+    required this.uploader,
+    this.thumbnailUrl = '',
+    required this.videoUrl,
+    required this.type,
+    this.quality = 'Auto',
+    this.videoPath,
+    this.audioPath,
+    this.totalBytes = 0,
+    this.receivedBytes = 0,
+    this.status = 'downloading',
+    DateTime? createdAt,
+  }) : createdAt = createdAt ?? DateTime.now();
+
+  bool get isCompleted => status == 'completed';
+  bool get isDownloading => status == 'downloading';
+  bool get isFailed => status == 'failed';
+  bool get isMusic =>
+      type == DownloadType.audio || type == DownloadType.music;
+  double get progress =>
+      totalBytes > 0 ? (receivedBytes / totalBytes).clamp(0.0, 1.0) : 0.0;
+
+  DownloadItem copyWith({
+    String? videoPath,
+    String? audioPath,
+    int? totalBytes,
+    int? receivedBytes,
+    String? status,
+    String? quality,
+  }) =>
+      DownloadItem(
+        id: id,
+        videoId: videoId,
+        title: title,
+        uploader: uploader,
+        thumbnailUrl: thumbnailUrl,
+        videoUrl: videoUrl,
+        type: type,
+        quality: quality ?? this.quality,
+        videoPath: videoPath ?? this.videoPath,
+        audioPath: audioPath ?? this.audioPath,
+        totalBytes: totalBytes ?? this.totalBytes,
+        receivedBytes: receivedBytes ?? this.receivedBytes,
+        status: status ?? this.status,
+        createdAt: createdAt,
+      );
+
+  Map<String, dynamic> toMap() => {
+        'id': id,
+        'videoId': videoId,
+        'title': title,
+        'uploader': uploader,
+        'thumbnailUrl': thumbnailUrl,
+        'videoUrl': videoUrl,
+        'type': type.name,
+        'quality': quality,
+        'videoPath': videoPath,
+        'audioPath': audioPath,
+        'totalBytes': totalBytes,
+        'receivedBytes': receivedBytes,
+        'status': status,
+        'createdAt': createdAt.toIso8601String(),
+      };
+
+  factory DownloadItem.fromMap(Map map) => DownloadItem(
+        id: map['id'] ?? '',
+        videoId: map['videoId'] ?? '',
+        title: map['title'] ?? '',
+        uploader: map['uploader'] ?? '',
+        thumbnailUrl: map['thumbnailUrl'] ?? '',
+        videoUrl: map['videoUrl'] ?? '',
+        type: DownloadType.values.firstWhere(
+          (t) => t.name == (map['type'] ?? ''),
+          orElse: () => DownloadType.videoAudio,
+        ),
+        quality: map['quality'] ?? 'Auto',
+        videoPath: map['videoPath'],
+        audioPath: map['audioPath'],
+        totalBytes: (map['totalBytes'] as int?) ?? 0,
+        receivedBytes: (map['receivedBytes'] as int?) ?? 0,
+        status: map['status'] ?? 'downloading',
+        createdAt: DateTime.tryParse(map['createdAt'] ?? '') ?? DateTime.now(),
+      );
+}
