@@ -50,8 +50,15 @@ class _AdlessAudioHandler extends BaseAudioHandler
     _broadcastState();
   }
 
+  /// Fired whenever the handler (re)starts audio — used to make the
+  /// video mini player yield so two things never play at once.
+  void Function()? onPlayStarting;
+
   @override
-  Future<void> play() => _player.play();
+  Future<void> play() {
+    onPlayStarting?.call();
+    return _player.play();
+  }
 
   @override
   Future<void> pause() => _player.pause();
@@ -150,6 +157,11 @@ class MusicPlaybackService extends ChangeNotifier {
 
   MusicPlaybackService(this._storage);
 
+  /// Fired whenever music (re)starts playing — from the app or from the
+  /// notification controls. The video mini player closes in response so
+  /// only one of them ever plays at a time, like the official app.
+  void Function()? onPlaybackStarting;
+
   Future<void> _initialize() {
     return _initializing ??= _startAudioService();
   }
@@ -174,6 +186,7 @@ class MusicPlaybackService extends ChangeNotifier {
       _handler = handler;
       handler.onNext = next;
       handler.onPrevious = previous;
+      handler.onPlayStarting = () => onPlaybackStarting?.call();
       handler.playbackState.listen((state) {
         _playing = state.playing;
         if (state.processingState == AudioProcessingState.completed &&

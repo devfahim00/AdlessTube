@@ -4,6 +4,8 @@ class VideoItem {
   final String thumbnailUrl;
   final String uploader;
   final String uploaderUrl;
+  /// Channel avatar URL when the extractor provided one.
+  final String uploaderAvatarUrl;
   final String url;
   final Duration? duration;
   final int? viewCount;
@@ -16,6 +18,7 @@ class VideoItem {
     required this.thumbnailUrl,
     required this.uploader,
     this.uploaderUrl = '',
+    this.uploaderAvatarUrl = '',
     required this.url,
     this.duration,
     this.viewCount,
@@ -29,6 +32,7 @@ class VideoItem {
         'thumbnailUrl': thumbnailUrl,
         'uploader': uploader,
         'uploaderUrl': uploaderUrl,
+        'uploaderAvatarUrl': uploaderAvatarUrl,
         'url': url,
         'durationSeconds': duration?.inSeconds,
         'isLive': isLive,
@@ -41,6 +45,7 @@ class VideoItem {
         thumbnailUrl: map['thumbnailUrl'] ?? '',
         uploader: map['uploader'] ?? '',
         uploaderUrl: map['uploaderUrl'] ?? '',
+        uploaderAvatarUrl: map['uploaderAvatarUrl'] ?? '',
     url: map['url'] ?? '',
     duration: map['durationSeconds'] is int
         ? Duration(seconds: map['durationSeconds'] as int)

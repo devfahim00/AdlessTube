@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:provider/provider.dart';
@@ -8,6 +10,7 @@ import 'region_select_screen.dart';
 import 'screens/main_shell.dart';
 import 'service_select_screen.dart';
 import 'storage_service.dart';
+import 'video_playback_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -17,6 +20,11 @@ void main() async {
   await storage.init();
   final music = MusicPlaybackService(storage);
   final downloads = DownloadService();
+  final videoPlayback = VideoPlaybackService(storage, music);
+  // Only one audio surface at a time: starting music (from the app or the
+  // notification) closes the video mini player, and opening a video stops
+  // music inside the service itself.
+  music.onPlaybackStarting = () => unawaited(videoPlayback.close());
 
   runApp(
     MultiProvider(
@@ -24,6 +32,7 @@ void main() async {
         ChangeNotifierProvider.value(value: storage),
         ChangeNotifierProvider.value(value: music),
         ChangeNotifierProvider.value(value: downloads),
+        ChangeNotifierProvider.value(value: videoPlayback),
       ],
       child: const AdlessTubeApp(),
     ),

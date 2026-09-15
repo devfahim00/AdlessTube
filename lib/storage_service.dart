@@ -11,6 +11,7 @@ class StorageService extends ChangeNotifier {
   static const _playbackBox = 'playback';
   static const _savedVideosBox = 'saved_videos';
   static const _downloadsBoxName = 'downloads';
+  static const _searchHistoryBox = 'search_history';
   static const _regionKey = 'region_code';
   static const _regionSelectedKey = 'region_selected';
   static const _themeModeKey = 'theme_mode';
@@ -33,6 +34,7 @@ class StorageService extends ChangeNotifier {
     await Hive.openBox(_playbackBox);
     await Hive.openBox(_savedVideosBox);
     await Hive.openBox(_downloadsBoxName);
+    await Hive.openBox(_searchHistoryBox);
   }
 
   // ─────────── Region ───────────
@@ -192,6 +194,45 @@ class StorageService extends ChangeNotifier {
       'quality': quality,
       'format': format,
     });
+  }
+
+  // ─────────── Search history ───────────
+
+  /// Saves a search query (most recent first, capped at 30 entries).
+  Future<void> addSearchQuery(String query) async {
+    final q = query.trim();
+    if (q.isEmpty) return;
+    final box = Hive.box(_searchHistoryBox);
+    await box.put(q, DateTime.now().millisecondsSinceEpoch);
+    if (box.length > 30) {
+      final entries = [
+        for (final key in box.keys)
+          MapEntry(key.toString(), (box.get(key) as int?) ?? 0),
+      ]..sort((a, b) => a.value.compareTo(b.value));
+      for (final entry in entries.take(box.length - 30)) {
+        await box.delete(entry.key);
+      }
+    }
+    notifyListeners();
+  }
+
+  List<String> getSearchHistory() {
+    final box = Hive.box(_searchHistoryBox);
+    final entries = [
+      for (final key in box.keys)
+        MapEntry(key.toString(), (box.get(key) as int?) ?? 0),
+    ]..sort((a, b) => b.value.compareTo(a.value));
+    return entries.map((entry) => entry.key).toList();
+  }
+
+  Future<void> removeSearchQuery(String query) async {
+    await Hive.box(_searchHistoryBox).delete(query);
+    notifyListeners();
+  }
+
+  Future<void> clearSearchHistory() async {
+    await Hive.box(_searchHistoryBox).clear();
+    notifyListeners();
   }
 
   // ─────────── Subscriptions ───────────

@@ -18,24 +18,26 @@ class SettingsScreen extends StatelessWidget {
             child: Text('Appearance',
                 style: TextStyle(fontWeight: FontWeight.bold)),
           ),
-          RadioListTile<ThemeMode>(
-            value: ThemeMode.system,
+          RadioGroup<ThemeMode>(
             groupValue: storage.themeMode,
-            title: const Text('Auto'),
-            subtitle: const Text('Use device setting'),
             onChanged: (mode) => storage.setThemeMode(mode!),
-          ),
-          RadioListTile<ThemeMode>(
-            value: ThemeMode.light,
-            groupValue: storage.themeMode,
-            title: const Text('Light'),
-            onChanged: (mode) => storage.setThemeMode(mode!),
-          ),
-          RadioListTile<ThemeMode>(
-            value: ThemeMode.dark,
-            groupValue: storage.themeMode,
-            title: const Text('Dark'),
-            onChanged: (mode) => storage.setThemeMode(mode!),
+            child: const Column(
+              children: [
+                RadioListTile<ThemeMode>(
+                  value: ThemeMode.system,
+                  title: Text('Auto'),
+                  subtitle: Text('Use device setting'),
+                ),
+                RadioListTile<ThemeMode>(
+                  value: ThemeMode.light,
+                  title: Text('Light'),
+                ),
+                RadioListTile<ThemeMode>(
+                  value: ThemeMode.dark,
+                  title: Text('Dark'),
+                ),
+              ],
+            ),
           ),
           const Divider(),
           const Padding(

@@ -15,8 +15,8 @@ import 'player_screen.dart';
 
 /// ═══════════════════════ SEARCH ═══════════════════════
 ///
-/// Shows live suggestions while typing and loads more results endlessly
-/// as the user scrolls.
+/// Shows recent searches as history, live suggestions while typing and
+/// loads more results endlessly as the user scrolls.
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
 
@@ -41,7 +41,7 @@ class _SearchScreenState extends State<SearchScreen>
   String? _error;
   String _lastQuery = '';
 
-  // Suggestions
+  // Suggestions + history
   Timer? _debounce;
   List<String> _suggestionList = [];
   bool _showSuggestions = true;
@@ -77,6 +77,9 @@ class _SearchScreenState extends State<SearchScreen>
   Future<void> _search() async {
     final q = _controller.text.trim();
     if (q.isEmpty) return;
+    // Remember every search so it shows up as history next time.
+    unawaited(context.read<StorageService>().addSearchQuery(q));
+    FocusManager.instance.primaryFocus?.unfocus();
     setState(() {
       _loading = true;
       _error = null;
@@ -99,6 +102,14 @@ class _SearchScreenState extends State<SearchScreen>
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  void _searchFromHistory(String query) {
+    _controller.text = query;
+    // Move the caret to the end so editing continues naturally.
+    _controller.selection =
+        TextSelection.collapsed(offset: _controller.text.length);
+    _search();
   }
 
   Future<void> _loadMoreVideos() async {
@@ -178,13 +189,12 @@ class _SearchScreenState extends State<SearchScreen>
           : _error != null
               ? ErrorView(message: _error!, onRetry: _search)
               : _showSuggestions || _lastQuery.isEmpty
-                  ? SuggestionList(
+                  ? SearchHistoryAndSuggestions(
+                      controller: _controller,
                       suggestions: _suggestionList,
-                      hintText: 'Search for videos or channels',
-                      onSelected: (suggestion) {
-                        _controller.text = suggestion;
-                        _search();
-                      },
+                      onSearch: _search,
+                      onSearchFromHistory: _searchFromHistory,
+                      emptyHint: 'Search for videos or channels',
                     )
                   : TabBarView(
                       controller: _tab,

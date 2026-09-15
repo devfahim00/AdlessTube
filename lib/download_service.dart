@@ -187,7 +187,6 @@ class DownloadService extends ChangeNotifier {
   Future<void> _run(DownloadItem item) async {
     try {
       final dir = await _dir();
-
       // ── Audio only (music player + video player audio option) ──
       if (item.isMusic || item.type == DownloadType.audio) {
         final audio = await _service.getBestAudioStream(item.videoUrl);
@@ -265,23 +264,51 @@ class DownloadService extends ChangeNotifier {
           '$dir/${item.videoId}_${stream.quality}_video.${_extFor(stream.format, audio: false)}';
       final audioPath = '$dir/${item.videoId}_audio.m4a';
 
-      await _downloadFile(
-        stream.url,
-        videoPath,
-        itemId: item.id,
-        onProgress: (received, total) =>
-            _updateProgress(item.id, received: received, total: total),
-      );
-      final videoBytes = File(videoPath).lengthSync();
-      await _updateProgress(item.id, received: videoBytes, total: 0);
-      await _downloadFile(
-        audioUrl,
-        audioPath,
-        itemId: item.id,
-        onProgress: (received, _) =>
-            _updateProgress(item.id, received: videoBytes + received, total: 0),
-      );
-      final totalBytes = videoBytes + File(audioPath).lengthSync();
+      // Video and audio download in parallel on separate connections —
+      // roughly twice as fast as one after the other on most networks.
+      var videoReceived = 0;
+      var audioReceived = 0;
+      var videoTotal = 0;
+      var audioTotal = 0;
+      var lastPairTick = 0;
+      void reportPair() {
+        final received = videoReceived + audioReceived;
+        if (received - lastPairTick >= 400 * 1024) {
+          lastPairTick = received;
+          _updateProgress(
+            item.id,
+            received: received,
+            total: videoTotal > 0 && audioTotal > 0
+                ? videoTotal + audioTotal
+                : 0,
+          );
+        }
+      }
+
+      await Future.wait<void>([
+        _downloadFile(
+          stream.url,
+          videoPath,
+          itemId: item.id,
+          onProgress: (received, total) {
+            videoReceived = received;
+            videoTotal = total;
+            reportPair();
+          },
+        ),
+        _downloadFile(
+          audioUrl,
+          audioPath,
+          itemId: item.id,
+          onProgress: (received, total) {
+            audioReceived = received;
+            audioTotal = total;
+            reportPair();
+          },
+        ),
+      ]);
+      final totalBytes = File(videoPath).lengthSync() +
+          File(audioPath).lengthSync();
       await _finish(item.id,
           videoPath: videoPath,
           audioPath: audioPath,
@@ -298,9 +325,191 @@ class DownloadService extends ChangeNotifier {
     }
   }
 
-  /// Streams [url] to [savePath] while reporting progress.
-  /// Partial files are removed when the download fails or is cancelled.
+  // ─────────── Fast download core ───────────
+
+  /// Files below this size go over a single connection — parallel
+  /// segments would only add overhead.
+  static const _minParallelBytes = 2 * 1024 * 1024; // 2 MB
+
+  /// Downloads [url] to [savePath] as fast as the server allows.
+  ///
+  /// Large files are split into segments downloaded over parallel HTTP
+  /// range connections (the YouTube CDN supports them), typically several
+  /// times faster than a single stream. Anything the server can't
+  /// range-serve falls back to one plain connection.
   Future<void> _downloadFile(
+    String url,
+    String savePath, {
+    required String itemId,
+    required void Function(int received, int total) onProgress,
+  }) async {
+    var total = -1;
+    try {
+      total = await _probeContentLength(url);
+    } catch (_) {}
+    if (total >= _minParallelBytes) {
+      try {
+        await _downloadParallel(url, savePath, total, itemId, onProgress);
+        return;
+      } catch (e) {
+        if (_cancelled.contains(itemId)) rethrow;
+        debugPrint('Parallel download fell back to single: $e');
+        _quietDelete(savePath);
+      }
+    }
+    await _downloadSingle(url, savePath, itemId: itemId, onProgress: onProgress);
+  }
+
+  /// Asks the server for one byte and reads the full size from the
+  /// `Content-Range` header. Returns -1 when ranges are not supported.
+  Future<int> _probeContentLength(String url) async {
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 30);
+    try {
+      final request = await client.getUrl(Uri.parse(url));
+      request.headers.set(HttpHeaders.rangeHeader, 'bytes=0-0');
+      final response = await request.close();
+      final status = response.statusCode;
+      final contentRange = response.headers.value('Content-Range') ?? '';
+      if (status == 206 && contentRange.contains('/')) {
+        // The tiny 1-byte body is drained so the socket is released.
+        await response.drain<void>();
+        final total = int.tryParse(contentRange.split('/').last);
+        if (total != null && total > 0) return total;
+      }
+      return -1;
+    } finally {
+      // Never let the probe stream a full body — abandon the connection.
+      client.close(force: true);
+    }
+  }
+
+  /// Splits [total] bytes into 3-8 segments of at least 256 KB.
+  List<(int, int)> _planSegments(int total) {
+    var count = total >= 128 * 1024 * 1024
+        ? 8
+        : total >= 32 * 1024 * 1024
+            ? 6
+            : total >= 8 * 1024 * 1024
+                ? 4
+                : 3;
+    final bySize = total ~/ (256 * 1024);
+    if (bySize < count) count = bySize;
+    if (count < 1) count = 1;
+    final segments = <(int, int)>[];
+    final size = total ~/ count;
+    var start = 0;
+    for (var i = 0; i < count; i++) {
+      final end = i == count - 1 ? total - 1 : start + size - 1;
+      segments.add((start, end));
+      start = end + 1;
+    }
+    return segments;
+  }
+
+  /// One parallel segment writer: its own positioned handle into the
+  /// shared, pre-allocated target file.
+  Future<void> _downloadSegment(
+    String url,
+    RandomAccessFile raf,
+    int start,
+    int end,
+    String itemId,
+    void Function(int chunkBytes) onChunk,
+  ) async {
+    var offset = start;
+    var attempt = 0;
+    while (offset <= end) {
+      attempt++;
+      final client = HttpClient()
+        ..connectionTimeout = const Duration(seconds: 30);
+      try {
+        final request = await client.getUrl(Uri.parse(url));
+        request.headers.set(HttpHeaders.rangeHeader, 'bytes=$offset-$end');
+        final response = await request.close();
+        if (response.statusCode != 206) {
+          throw StateError('HTTP ${response.statusCode}');
+        }
+        await raf.setPosition(offset);
+        await for (final chunk in response) {
+          if (_cancelled.contains(itemId)) throw StateError('cancelled');
+          await raf.writeFrom(chunk);
+          offset += chunk.length;
+          onChunk(chunk.length);
+        }
+        if (offset != end + 1) {
+          throw StateError('Segment incomplete ($offset/${end + 1})');
+        }
+        return;
+      } catch (e) {
+        if (_cancelled.contains(itemId) || attempt >= 3) rethrow;
+        debugPrint('Segment retry $attempt ($start-$end): $e');
+        await Future<void>.delayed(Duration(milliseconds: 400 * attempt));
+        // Loop continues from the confirmed offset — dropped connections
+        // resume exactly where they stopped instead of restarting the file.
+      } finally {
+        // Single-use client: abandon the connection instead of waiting
+        // for a possibly dead socket to clean up on its own.
+        client.close(force: true);
+      }
+    }
+  }
+
+  Future<void> _downloadParallel(
+    String url,
+    String savePath,
+    int total,
+    String itemId,
+    void Function(int received, int total) onProgress,
+  ) async {
+    final segments = _planSegments(total);
+
+    // Create the target file, then open every segment handle BEFORE the
+    // first byte is written: each FileMode.write open truncates an empty
+    // file (harmless), and afterwards each handle writes its own range.
+    final handles = <RandomAccessFile>[];
+    try {
+      final init = await File(savePath).open(mode: FileMode.write);
+      // Pre-allocating keeps the filesystem from fragmenting 8 writers.
+      await init.truncate(total);
+      await init.close();
+      for (var i = 0; i < segments.length; i++) {
+        handles.add(await File(savePath).open(mode: FileMode.write));
+      }
+
+      var received = 0;
+      var lastTick = 0;
+      void report(int chunk) {
+        received += chunk;
+        if (received - lastTick >= 500 * 1024) {
+          lastTick = received;
+          onProgress(received, total);
+        }
+      }
+
+      await Future.wait<void>([
+        for (var i = 0; i < segments.length; i++)
+          _downloadSegment(
+            url,
+            handles[i],
+            segments[i].$1,
+            segments[i].$2,
+            itemId,
+            report,
+          ),
+      ]);
+      onProgress(total, total);
+    } finally {
+      for (final handle in handles) {
+        try {
+          await handle.close();
+        } catch (_) {}
+      }
+    }
+  }
+
+  /// Plain single-connection download — the fallback path.
+  Future<void> _downloadSingle(
     String url,
     String savePath, {
     required String itemId,
@@ -312,7 +521,7 @@ class DownloadService extends ChangeNotifier {
     try {
       final request = await client.getUrl(Uri.parse(url));
       final response = await request.close();
-      if (response.statusCode != 200) {
+      if (response.statusCode != 200 && response.statusCode != 206) {
         throw StateError('HTTP ${response.statusCode}');
       }
       final total = response.contentLength; // -1 when unknown
@@ -335,14 +544,18 @@ class DownloadService extends ChangeNotifier {
       try {
         await sink?.close();
       } catch (_) {}
-      try {
-        final file = File(savePath);
-        if (file.existsSync()) file.deleteSync();
-      } catch (_) {}
+      _quietDelete(savePath);
       rethrow;
     } finally {
-      client.close();
+      client.close(force: true);
     }
+  }
+
+  void _quietDelete(String path) {
+    try {
+      final file = File(path);
+      if (file.existsSync()) file.deleteSync();
+    } catch (_) {}
   }
 
   /// Highest-quality stream at or below [target] (streams are sorted

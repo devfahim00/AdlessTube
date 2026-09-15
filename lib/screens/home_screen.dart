@@ -1,33 +1,24 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:newpipeextractor_dart/newpipeextractor_dart.dart'
-    show PageToken;
 import 'package:provider/provider.dart';
 
 import '../models.dart';
-import '../newpipe_service.dart';
+import '../recommendation_service.dart';
 import '../region_service.dart';
 import '../storage_service.dart';
 import '../widgets.dart';
 import 'player_screen.dart';
 import 'search_screen.dart';
 
-/// One paginated source the home feed can pull from.
-class _FeedSource {
-  /// search | channel | related
-  final String kind;
-  final String key;
-  PageToken? next;
-  bool exhausted = false;
-
-  _FeedSource(this.kind, this.key);
-}
-
 /// ═══════════════════════ HOME ═══════════════════════
 ///
-/// YouTube-style feed: big tiles, skeleton loading and endless content —
-/// new videos keep loading as long as the user keeps scrolling.
+/// Personalized YouTube-style feed:
+/// * big tiles with thumbnails, titles and channel avatars,
+/// * skeleton loading and endless content while scrolling,
+/// * sources mixed by weight from everything the user did in the app —
+///   subscriptions, watch history, saved videos, past searches,
+///   watched-but-unsubscribed channels, similar channels and trending.
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -36,14 +27,15 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  final _service = NewPipeService();
+  final _recommendations = RecommendationService();
   final List<VideoItem> _feed = [];
   final Set<String> _seen = {};
-  final List<_FeedSource> _sources = [];
+  Set<String> _watchedIds = {};
+  List<FeedSource> _sources = [];
   bool _loading = true;
   bool _loadingMore = false;
   String? _error;
-  int _cursor = 0;
+  bool _discovering = false;
 
   @override
   void initState() {
@@ -54,15 +46,28 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _initSources() {
     final storage = context.read<StorageService>();
-    for (final url in storage.getSubscribedChannelUrls()) {
-      _sources.add(_FeedSource('channel', url));
-    }
-    for (final query in _service.trendingQueries(storage.regionCode)) {
-      _sources.add(_FeedSource('search', query));
-    }
-    // Recent watches personalise the feed with related videos.
-    for (final video in storage.getHistory().take(3)) {
-      if (video.url.isNotEmpty) _sources.add(_FeedSource('related', video.url));
+    // Recently watched videos are not repeated in the feed.
+    _watchedIds = storage.getHistory().map((v) => v.id).toSet();
+    _sources = _recommendations.buildLocalSources(storage);
+    unawaited(_discoverSimilar());
+  }
+
+  /// Background discovery of channels related to the user's subscriptions.
+  /// The feed is already usable while this runs; discovered sources simply
+  /// join the mix afterwards.
+  Future<void> _discoverSimilar() async {
+    if (_discovering) return;
+    _discovering = true;
+    try {
+      final found = await _recommendations.discoverSimilarChannels(
+        context.read<StorageService>(),
+        existing: _sources,
+      );
+      if (found.isNotEmpty && mounted) {
+        setState(() => _sources.addAll(found));
+      }
+    } finally {
+      _discovering = false;
     }
   }
 
@@ -86,14 +91,13 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  /// Manual refresh only — switching tabs never triggers this.
+  /// Manual refresh only — switching tabs never triggers this. Refreshing
+  /// rebuilds the recommendation sources so new watches, saves, searches and
+  /// subscriptions immediately change the mix.
   Future<void> _refresh() async {
     _feed.clear();
     _seen.clear();
-    for (final source in _sources) {
-      source.exhausted = false;
-      source.next = null;
-    }
+    _initSources();
     await _loadInitial();
   }
 
@@ -102,7 +106,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _fill({int target = 10}) async {
     var added = 0;
     while (added < target) {
-      final source = _nextSource();
+      final source = _recommendations.pickSource(_sources);
       if (source == null) break;
       final count = await _fetchSource(source);
       added += count;
@@ -110,40 +114,10 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  /// Round-robin through the sources so the feed stays mixed.
-  _FeedSource? _nextSource() {
-    final alive = _sources.where((s) => !s.exhausted).toList();
-    if (alive.isEmpty) return null;
-    final source = alive[_cursor % alive.length];
-    _cursor++;
-    return source;
-  }
-
-  Future<int> _fetchSource(_FeedSource source) async {
+  Future<int> _fetchSource(FeedSource source) async {
     try {
-      switch (source.kind) {
-        case 'related':
-          source.exhausted = true; // one-shot
-          final videos = await _service.getRelatedVideos(source.key);
-          return _addUnique(videos);
-        case 'channel':
-          final page = await _service.getChannelTabPage(
-            source.key,
-            'videos',
-            next: source.next,
-          );
-          source.next = page.next;
-          if (page.next == null) source.exhausted = true;
-          return _addUnique(page.items);
-        default:
-          final page = await _service.searchVideoPage(
-            source.key,
-            next: source.next,
-          );
-          source.next = page.next;
-          if (page.next == null) source.exhausted = true;
-          return _addUnique(page.items);
-      }
+      final videos = await _recommendations.fetch(source);
+      return _addUnique(videos);
     } catch (_) {
       source.exhausted = true;
       return 0;
@@ -154,6 +128,8 @@ class _HomeScreenState extends State<HomeScreen> {
     var added = 0;
     for (final video in videos) {
       if (video.isLive || video.isShort) continue;
+      // Never repeat something the user already watched.
+      if (_watchedIds.contains(video.id)) continue;
       if (_seen.add(video.id)) {
         _feed.add(video);
         added++;

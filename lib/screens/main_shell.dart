@@ -1,15 +1,18 @@
 import 'dart:async';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../storage_service.dart';
 import '../update_service.dart';
+import '../video_playback_service.dart';
 import 'home_screen.dart';
 import 'library_screen.dart';
 import 'menu_screen.dart';
 import 'music_screen.dart';
+import 'player_screen.dart';
 import 'shorts_screen.dart';
 
 /// ═══════════════════════ MAIN SHELL (Bottom Pill Navbar) ═══════════════════════
@@ -153,7 +156,171 @@ class _MainShellState extends State<MainShell> {
               ),
             ),
           ),
+          // Floating mini player — bottom right, above the pill navbar.
+          const Positioned(
+            right: 12,
+            bottom: 92,
+            child: SafeArea(
+              top: false,
+              child: _MiniPlayer(),
+            ),
+          ),
         ],
+      ),
+    );
+  }
+}
+
+/// ═══════════════════════ MINI PLAYER ═══════════════════════
+///
+/// A video closed with the back gesture keeps playing here — YouTube
+/// style. Tapping the card reopens the full player page.
+class _MiniPlayer extends StatelessWidget {
+  const _MiniPlayer();
+
+  @override
+  Widget build(BuildContext context) {
+    final vps = context.watch<VideoPlaybackService>();
+    final video = vps.currentVideo;
+    if (!vps.miniVisible || video == null) {
+      return const SizedBox.shrink();
+    }
+
+    final theme = Theme.of(context);
+    final progress = vps.duration.inMilliseconds > 0
+        ? (vps.position.inMilliseconds / vps.duration.inMilliseconds)
+            .clamp(0.0, 1.0)
+        : 0.0;
+
+    return Material(
+      color: theme.colorScheme.surfaceContainerHighest,
+      elevation: 8,
+      shadowColor: Colors.black54,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => PlayerScreen(
+                video: video,
+                download: vps.currentDownload,
+              ),
+            ),
+          );
+        },
+        child: SizedBox(
+          width: 320,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(8, 8, 4, 8),
+                child: Row(
+                  children: [
+                    // Thumbnail
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: SizedBox(
+                        width: 96,
+                        height: 54,
+                        child: video.thumbnailUrl.isEmpty
+                            ? Container(
+                                color: Colors.black,
+                                child: const Icon(Icons.videocam,
+                                    color: Colors.white70),
+                              )
+                            : CachedNetworkImage(
+                                imageUrl: video.thumbnailUrl,
+                                width: 96,
+                                height: 54,
+                                fit: BoxFit.cover,
+                                placeholder: (_, __) => Container(
+                                  width: 96,
+                                  height: 54,
+                                  color: Colors.black,
+                                ),
+                                errorWidget: (_, __, ___) => Container(
+                                  width: 96,
+                                  height: 54,
+                                  color: Colors.black,
+                                  child: const Icon(Icons.videocam,
+                                      color: Colors.white70),
+                                ),
+                              ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    // Title + channel
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            video.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            video.uploader,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 11.5,
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    // Play / pause
+                    IconButton(
+                      visualDensity: VisualDensity.compact,
+                      iconSize: 22,
+                      onPressed: () => vps.togglePlayPause(),
+                      icon: Icon(
+                        vps.isPlaying
+                            ? Icons.pause_circle_filled
+                            : Icons.play_circle_filled,
+                        color: theme.colorScheme.primary,
+                      ),
+                    ),
+                    // Close
+                    IconButton(
+                      visualDensity: VisualDensity.compact,
+                      iconSize: 20,
+                      onPressed: () => vps.close(),
+                      icon: Icon(
+                        Icons.close,
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              // Thin progress bar
+              ClipRRect(
+                borderRadius: const BorderRadius.vertical(
+                  bottom: Radius.circular(14),
+                ),
+                child: LinearProgressIndicator(
+                  value: progress,
+                  minHeight: 3,
+                  backgroundColor: theme.colorScheme.surfaceContainerHigh,
+                  valueColor: AlwaysStoppedAnimation(
+                    theme.colorScheme.primary,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

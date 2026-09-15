@@ -5,27 +5,28 @@ import 'package:android_pip/android_pip.dart';
 import 'package:android_pip/pip_widget.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../download_service.dart';
 import '../models.dart';
-import '../music_playback_service.dart';
 import '../newpipe_service.dart';
 import '../storage_service.dart';
+import '../video_playback_service.dart';
 import '../widgets.dart';
 import 'channel_screen.dart';
 import 'video_controls.dart';
 
 /// ═══════════════════════ PLAYER ═══════════════════════
 ///
-/// YouTube-style player:
+/// YouTube-style player built on top of [VideoPlaybackService]:
 /// * video area with custom controls (tap to pause, double-tap to seek,
 ///   gear menu with quality + playback speed, fullscreen),
 /// * action row under the title with Save / Share / Download / PiP,
-/// * related videos below.
+/// * related videos below,
+/// * pressing back minimizes the video into the floating mini player —
+///   it keeps playing above the navbar and reopens from there.
 class PlayerScreen extends StatefulWidget {
   final VideoItem video;
 
@@ -38,128 +39,29 @@ class PlayerScreen extends StatefulWidget {
   State<PlayerScreen> createState() => _PlayerScreenState();
 }
 
-class _PlayerScreenState extends State<PlayerScreen>
-    with WidgetsBindingObserver {
-  late final Player _player;
-  late final VideoController _controller;
-  late final StorageService _storage;
+class _PlayerScreenState extends State<PlayerScreen> {
+  late final VideoPlaybackService _vps;
   final _service = NewPipeService();
 
-  bool _loading = true;
-  String? _error;
-  bool _isPlaying = false;
   bool _isFullscreen = false;
-  bool _isLeaving = false;
-
-  List<VideoStreamInfo> _streams = [];
-  VideoStreamInfo? _currentStream;
   List<VideoItem> _related = [];
   bool _loadingRelated = false;
-  Duration _lastSavedPosition = Duration.zero;
-  double _playbackSpeed = 1.0;
 
   @override
   void initState() {
     super.initState();
-    _storage = context.read<StorageService>();
-    unawaited(context.read<MusicPlaybackService>().stop());
-    _player = Player();
-    _controller = VideoController(_player);
-    WidgetsBinding.instance.addObserver(this);
+    _vps = context.read<VideoPlaybackService>();
 
-    _player.stream.playing.listen((playing) {
-      // Persist immediately when the user pauses, instead of waiting for the
-      // periodic position listener. This also covers an immediate app close.
-      if (!playing &&
-          !_loading &&
-          _player.state.position.inMilliseconds > 0) {
-        _savePlaybackState();
-      }
-      if (mounted) setState(() => _isPlaying = playing);
-    });
-    _player.stream.position.listen((position) {
-      if ((position - _lastSavedPosition).inSeconds >= 5) {
-        _savePlaybackState(position);
-      }
-    });
-
-    _loadStreams();
+    // Attach to an already playing video (opened back from the mini player
+    // or switching to a related video); otherwise start a fresh one.
+    final alreadyLoaded =
+        _vps.currentVideo?.id == widget.video.id && _vps.currentVideo != null;
+    if (alreadyLoaded) {
+      _vps.resumePage();
+    } else {
+      unawaited(_vps.open(widget.video, download: widget.download));
+    }
     _loadRelated();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.inactive ||
-        state == AppLifecycleState.paused ||
-        state == AppLifecycleState.detached) {
-      _savePlaybackState();
-    }
-  }
-
-  Future<void> _loadStreams() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-    try {
-      final download = widget.download;
-      if (download != null) {
-        final videoPath = download.videoPath;
-        if (videoPath == null || !File(videoPath).existsSync()) {
-          setState(() {
-            _error = 'The downloaded file is missing.';
-            _loading = false;
-          });
-          return;
-        }
-        final saved = _storage.getPlaybackState(widget.video.id);
-        final savedPosition = Duration(
-          milliseconds: (saved?['positionMs'] as int?) ?? 0,
-        );
-        await _player.open(Media(videoPath, start: savedPosition));
-        final audioPath = download.audioPath;
-        if (audioPath != null && File(audioPath).existsSync()) {
-          await _player.setAudioTrack(
-            AudioTrack.uri(Uri.file(audioPath).toString()),
-          );
-        }
-        await _player.play();
-        setState(() => _loading = false);
-        return;
-      }
-
-      final streams = await _service.getAvailableStreams(widget.video.url);
-      if (streams.isEmpty) {
-        setState(() {
-          _error = 'No playable stream found.';
-          _loading = false;
-        });
-        return;
-      }
-      final saved = _storage.getPlaybackState(widget.video.id);
-      final savedQuality = saved?['quality'];
-      final savedFormat = saved?['format'];
-      final preferredQuality = _storage.defaultQuality;
-      final savedPosition = Duration(
-        milliseconds: (saved?['positionMs'] as int?) ?? 0,
-      );
-      _streams = streams;
-      _currentStream = _selectDefaultStream(streams, preferredQuality);
-      for (final stream in streams) {
-        if (stream.quality == savedQuality && stream.format == savedFormat) {
-          _currentStream = stream;
-          break;
-        }
-      }
-      await _openStream(_currentStream!, start: savedPosition);
-      await _player.play();
-      setState(() => _loading = false);
-    } catch (e) {
-      setState(() {
-        _error = e.toString();
-        _loading = false;
-      });
-    }
   }
 
   Future<void> _loadRelated() async {
@@ -171,69 +73,6 @@ class _PlayerScreenState extends State<PlayerScreen>
       }
     } catch (_) {}
     if (mounted) setState(() => _loadingRelated = false);
-  }
-
-  Future<void> _changeQuality(VideoStreamInfo stream) async {
-    final wasPlaying = _isPlaying;
-    final position = _player.state.position;
-    await _openStream(stream, start: position);
-    if (wasPlaying) {
-      await _player.play();
-    } else {
-      await _player.pause();
-    }
-    setState(() => _currentStream = stream);
-    _savePlaybackState(position);
-  }
-
-  VideoStreamInfo _selectDefaultStream(
-    List<VideoStreamInfo> streams,
-    String preference,
-  ) {
-    // "Auto" uses a connection-friendly 720p target instead of always
-    // starting the most bandwidth-intensive stream.
-    final target = preference == 'Auto'
-        ? 720
-        : int.tryParse(preference.replaceAll('p', '')) ?? 720;
-    final ranked = streams
-        .map((stream) => (stream: stream, rank: _qualityRank(stream.quality)))
-        .where((item) => item.rank > 0)
-        .toList();
-    final atOrBelowTarget =
-        ranked.where((item) => item.rank <= target).toList();
-    if (atOrBelowTarget.isNotEmpty) return atOrBelowTarget.first.stream;
-    return ranked.isNotEmpty ? ranked.last.stream : streams.first;
-  }
-
-  int _qualityRank(String quality) {
-    final match = RegExp(r'(\d{3,4})').firstMatch(quality);
-    return match == null ? 0 : int.parse(match.group(1)!);
-  }
-
-  Future<void> _changeSpeed(double speed) async {
-    await _player.setRate(speed);
-    if (mounted) setState(() => _playbackSpeed = speed);
-  }
-
-  Future<void> _openStream(VideoStreamInfo stream, {Duration? start}) async {
-    await _player.open(Media(stream.url, start: start));
-    if (stream.audioUrl != null) {
-      await _player.setAudioTrack(AudioTrack.uri(stream.audioUrl!));
-    }
-  }
-
-  void _savePlaybackState([Duration? position]) {
-    if (widget.download != null) return; // local files keep no stream state
-    final stream = _currentStream;
-    if (stream == null) return;
-    final currentPosition = position ?? _player.state.position;
-    _lastSavedPosition = currentPosition;
-    unawaited(_storage.savePlaybackState(
-      videoId: widget.video.id,
-      position: currentPosition,
-      quality: stream.quality,
-      format: stream.format,
-    ));
   }
 
   void _openRelated(VideoItem v) async {
@@ -274,20 +113,20 @@ class _PlayerScreenState extends State<PlayerScreen>
     }
   }
 
+  /// Back from the player shrinks the video into the floating mini player
+  /// instead of stopping it — exactly like the official YouTube app.
+  void _minimizeAndLeave() {
+    _vps.minimize();
+    Navigator.of(context).maybePop();
+  }
+
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    _savePlaybackState();
-    unawaited(_player.stop());
-    unawaited(_player.dispose());
+    // The service keeps the video playing in the mini player; this page
+    // only restores the system UI.
     SystemChrome.setPreferredOrientations(DeviceOrientation.values);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
-  }
-
-  Future<void> _stopBeforeLeaving() async {
-    _savePlaybackState();
-    await _player.stop();
   }
 
   // ─────────── Settings (gear) sheet ───────────
@@ -350,7 +189,7 @@ class _PlayerScreenState extends State<PlayerScreen>
                   style: TextStyle(color: isDark ? Colors.white : null),
                 ),
               )
-            else if (_streams.isEmpty)
+            else if (_vps.streams.isEmpty)
               Padding(
                 padding: const EdgeInsets.all(20),
                 child: Text(
@@ -364,7 +203,7 @@ class _PlayerScreenState extends State<PlayerScreen>
                 child: ListView(
                   shrinkWrap: true,
                   children: [
-                    for (final stream in _streams)
+                    for (final stream in _vps.streams)
                       _qualityRow(stream, isDark, sheetContext),
                   ],
                 ),
@@ -377,11 +216,11 @@ class _PlayerScreenState extends State<PlayerScreen>
   }
 
   Widget _speedChip(double speed, bool isDark) {
-    final selected = _playbackSpeed == speed;
+    final selected = _vps.playbackSpeed == speed;
     return Padding(
       padding: const EdgeInsets.only(right: 8),
       child: GestureDetector(
-        onTap: () => _changeSpeed(speed),
+        onTap: () => _vps.changeSpeed(speed),
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
           decoration: BoxDecoration(
@@ -404,9 +243,9 @@ class _PlayerScreenState extends State<PlayerScreen>
 
   Widget _qualityRow(
       VideoStreamInfo stream, bool isDark, BuildContext sheetContext) {
-    final isCurrent = _currentStream != null &&
-        stream.quality == _currentStream!.quality &&
-        stream.format == _currentStream!.format;
+    final isCurrent = _vps.currentStream != null &&
+        stream.quality == _vps.currentStream!.quality &&
+        stream.format == _vps.currentStream!.format;
     return ListTile(
       dense: true,
       leading: Icon(
@@ -422,7 +261,7 @@ class _PlayerScreenState extends State<PlayerScreen>
       ),
       onTap: () {
         Navigator.pop(sheetContext);
-        _changeQuality(stream);
+        _vps.changeQuality(stream);
       },
     );
   }
@@ -494,14 +333,13 @@ class _PlayerScreenState extends State<PlayerScreen>
     if (type == DownloadType.audio || type == DownloadType.music) {
       qualities = const ['Best'];
     } else {
-      var streams = _streams;
+      var streams = _vps.streams;
       if (streams.isEmpty) {
         try {
           streams = await _service.getAvailableStreams(widget.video.url);
         } catch (_) {
           streams = const [];
         }
-        if (mounted) setState(() => _streams = streams);
       }
       qualities = downloads.availableQualities(streams, type);
       if (qualities.isEmpty) qualities = const ['Auto'];
@@ -574,13 +412,11 @@ class _PlayerScreenState extends State<PlayerScreen>
     final saved = storage.isVideoSaved(widget.video.id);
 
     final video = Video(
-      controller: _controller,
+      controller: _vps.controller,
       controls: (state) => YouTubeVideoControls(
-        player: _player,
+        player: _vps.player,
         isFullscreen: _isFullscreen,
-        onBack: _isFullscreen
-            ? _exitFullscreen
-            : () => Navigator.of(context).maybePop(),
+        onBack: _isFullscreen ? _exitFullscreen : _minimizeAndLeave,
         onToggleFullscreen: _toggleFullscreen,
         onOpenSettings: _openSettingsSheet,
       ),
@@ -609,7 +445,20 @@ class _PlayerScreenState extends State<PlayerScreen>
             bottom: false,
             child: AspectRatio(
               aspectRatio: 16 / 9,
-              child: video,
+              child: Stack(
+                children: [
+                  video,
+                  // Back button above the video area.
+                  Positioned(
+                    top: 4,
+                    left: 4,
+                    child: IconButton(
+                      icon: const Icon(Icons.arrow_back, color: Colors.white),
+                      onPressed: _minimizeAndLeave,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
           Expanded(child: _buildBody(storage, saved)),
@@ -629,28 +478,21 @@ class _PlayerScreenState extends State<PlayerScreen>
           )
         : page;
 
-    final navigator = Navigator.of(context);
+    // The system back gesture also minimizes into the mini player.
     return PopScope(
-      canPop: _isLeaving,
-      onPopInvokedWithResult: (didPop, _) async {
-        if (didPop) return;
-        if (!_isLeaving) {
-          setState(() => _isLeaving = true);
-          await _stopBeforeLeaving();
-          if (mounted) {
-            navigator.pop();
-          }
-        }
+      canPop: true,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) _vps.minimize();
       },
       child: pipPage,
     );
   }
 
   Widget _buildBody(StorageService storage, bool saved) {
-    if (_loading) {
+    if (_vps.loading) {
       return const Center(child: CircularProgressIndicator());
     }
-    if (_error != null) {
+    if (_vps.error != null) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
@@ -660,13 +502,16 @@ class _PlayerScreenState extends State<PlayerScreen>
               const Icon(Icons.error_outline, size: 60, color: Colors.red),
               const SizedBox(height: 16),
               Text(
-                _error!,
+                _vps.error!,
                 textAlign: TextAlign.center,
                 style: const TextStyle(color: Colors.white),
               ),
               const SizedBox(height: 16),
               ElevatedButton(
-                onPressed: _loadStreams,
+                onPressed: () => _vps.open(
+                  widget.video,
+                  download: widget.download,
+                ),
                 child: const Text('Retry'),
               ),
             ],
@@ -726,7 +571,7 @@ class _PlayerScreenState extends State<PlayerScreen>
             ],
           ),
         ),
-        // Channel row
+        // Channel row with real avatar.
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
           child: Row(
@@ -742,33 +587,45 @@ class _PlayerScreenState extends State<PlayerScreen>
                             channel: ChannelItem(
                               url: video.uploaderUrl,
                               name: video.uploader,
-                              thumbnailUrl: video.thumbnailUrl,
+                              thumbnailUrl: video.uploaderAvatarUrl,
                             ),
                           ),
                         ),
                       );
                     }
                   },
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  child: Row(
                     children: [
-                      Text(
-                        video.uploader,
-                        style: TextStyle(
-                          color: Colors.grey[300],
-                          fontWeight: FontWeight.w500,
+                      ChannelAvatar(
+                        avatarUrl: video.uploaderAvatarUrl,
+                        name: video.uploader,
+                        radius: 18,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              video.uploader,
+                              style: TextStyle(
+                                color: Colors.grey[300],
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                            if (video.viewCount != null) ...[
+                              const SizedBox(height: 2),
+                              Text(
+                                '${formatViews(video.viewCount)} views',
+                                style: TextStyle(
+                                  color: Colors.grey[500],
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ],
                         ),
                       ),
-                      if (video.viewCount != null) ...[
-                        const SizedBox(height: 2),
-                        Text(
-                          '${formatViews(video.viewCount)} views',
-                          style: TextStyle(
-                            color: Colors.grey[500],
-                            fontSize: 12,
-                          ),
-                        ),
-                      ],
                     ],
                   ),
                 ),
@@ -776,7 +633,7 @@ class _PlayerScreenState extends State<PlayerScreen>
               SubscribeButton(
                 channelUrl: video.uploaderUrl,
                 channelName: video.uploader,
-                thumbnail: video.thumbnailUrl,
+                thumbnail: video.uploaderAvatarUrl,
               ),
             ],
           ),

@@ -4,6 +4,72 @@ import 'package:provider/provider.dart';
 import 'models.dart';
 import 'storage_service.dart';
 
+/// Channel avatar with a letter fallback — used everywhere a channel is
+/// shown (home feed, player, channel screens).
+class ChannelAvatar extends StatelessWidget {
+  final String avatarUrl;
+  final String name;
+  final double radius;
+
+  const ChannelAvatar({
+    super.key,
+    required this.avatarUrl,
+    required this.name,
+    this.radius = 17,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    if (avatarUrl.isEmpty) {
+      return CircleAvatar(
+        radius: radius,
+        backgroundColor: theme.colorScheme.primaryContainer,
+        child: Text(
+          name.isNotEmpty ? name[0].toUpperCase() : '?',
+          style: TextStyle(
+            color: theme.colorScheme.onPrimaryContainer,
+            fontWeight: FontWeight.bold,
+            fontSize: radius * 0.9,
+          ),
+        ),
+      );
+    }
+    return CircleAvatar(
+      radius: radius,
+      backgroundColor: theme.colorScheme.primaryContainer,
+      child: ClipOval(
+        child: CachedNetworkImage(
+          imageUrl: avatarUrl,
+          width: radius * 2,
+          height: radius * 2,
+          fit: BoxFit.cover,
+          placeholder: (_, __) => Container(
+            width: radius * 2,
+            height: radius * 2,
+            color: theme.colorScheme.surfaceContainerHighest,
+          ),
+          errorWidget: (_, __, ___) => Container(
+            width: radius * 2,
+            height: radius * 2,
+            color: theme.colorScheme.primaryContainer,
+            child: Center(
+              child: Text(
+                name.isNotEmpty ? name[0].toUpperCase() : '?',
+                style: TextStyle(
+                  color: theme.colorScheme.onPrimaryContainer,
+                  fontWeight: FontWeight.bold,
+                  fontSize: radius * 0.9,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// Compact horizontal video row used in search results, related videos,
 /// channel listings and history.
 class VideoTile extends StatelessWidget {
@@ -158,18 +224,10 @@ class YouTubeVideoTile extends StatelessWidget {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                CircleAvatar(
+                ChannelAvatar(
+                  avatarUrl: video.uploaderAvatarUrl,
+                  name: video.uploader,
                   radius: 17,
-                  backgroundColor: theme.colorScheme.primaryContainer,
-                  child: Text(
-                    video.uploader.isNotEmpty
-                        ? video.uploader[0].toUpperCase()
-                        : '?',
-                    style: TextStyle(
-                      color: theme.colorScheme.onPrimaryContainer,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
@@ -287,20 +345,10 @@ class ChannelTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListTile(
-      leading: CircleAvatar(
+      leading: ChannelAvatar(
+        avatarUrl: channel.thumbnailUrl,
+        name: channel.name,
         radius: 26,
-        backgroundColor: Colors.grey[800],
-        backgroundImage: channel.thumbnailUrl.isNotEmpty
-            ? NetworkImage(channel.thumbnailUrl)
-            : null,
-        child: channel.thumbnailUrl.isEmpty
-            ? Text(
-                channel.name.isNotEmpty
-                    ? channel.name[0].toUpperCase()
-                    : '?',
-                style: const TextStyle(fontSize: 20),
-              )
-            : null,
       ),
       title: Text(channel.name,
           style: const TextStyle(fontWeight: FontWeight.w600)),
@@ -438,6 +486,131 @@ class SuggestionList extends StatelessWidget {
         ),
         onTap: () => onSelected(suggestions[index]),
       ),
+    );
+  }
+}
+
+/// Search landing page: recent searches (history) followed by live
+/// suggestions. While typing, matching history entries appear first,
+/// exactly like the official app.
+class SearchHistoryAndSuggestions extends StatelessWidget {
+  final TextEditingController controller;
+  final List<String> suggestions;
+  final VoidCallback onSearch;
+  final ValueChanged<String> onSearchFromHistory;
+  final String emptyHint;
+
+  const SearchHistoryAndSuggestions({
+    super.key,
+    required this.controller,
+    required this.suggestions,
+    required this.onSearch,
+    required this.onSearchFromHistory,
+    this.emptyHint = 'Search to get started',
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final storage = context.watch<StorageService>();
+    final history = storage.getSearchHistory();
+    final query = controller.text.trim().toLowerCase();
+
+    // Matching history entries float to the top while typing.
+    final historyMatches = query.isEmpty
+        ? history.take(10).toList()
+        : history
+            .where((entry) => entry.toLowerCase().contains(query))
+            .take(3)
+            .toList();
+    // Do not repeat a history entry that is also a live suggestion.
+    final uniqueSuggestions =
+        suggestions.where((s) => !historyMatches.contains(s)).toList();
+
+    if (historyMatches.isEmpty && uniqueSuggestions.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text(
+            query.isEmpty && history.isEmpty ? emptyHint : 'No matches',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.grey[500]),
+          ),
+        ),
+      );
+    }
+
+    return ListView(
+      children: [
+        if (historyMatches.isNotEmpty) ...[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 12, 4),
+            child: Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Recent searches',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                    ),
+                  ),
+                ),
+                if (history.isNotEmpty)
+                  TextButton(
+                    onPressed: () => storage.clearSearchHistory(),
+                    child: const Text('Clear all'),
+                  ),
+              ],
+            ),
+          ),
+          for (final entry in historyMatches)
+            ListTile(
+              dense: true,
+              leading: const Icon(Icons.history),
+              title: Text(
+                entry,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              trailing: IconButton(
+                icon: const Icon(Icons.close, size: 18),
+                tooltip: 'Remove',
+                onPressed: () => storage.removeSearchQuery(entry),
+              ),
+              onTap: () => onSearchFromHistory(entry),
+            ),
+          if (uniqueSuggestions.isNotEmpty)
+            const Divider(height: 16, indent: 20, endIndent: 20),
+        ],
+        if (uniqueSuggestions.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
+            child: Text(
+              query.isEmpty ? 'Suggestions' : 'Search suggestions',
+              style: const TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 14,
+              ),
+            ),
+          ),
+        for (final suggestion in uniqueSuggestions)
+          ListTile(
+            dense: true,
+            leading: const Icon(Icons.search),
+            title: Text(
+              suggestion,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            onTap: () {
+              controller.text = suggestion;
+              controller.selection = TextSelection.collapsed(
+                offset: controller.text.length,
+              );
+              onSearch();
+            },
+          ),
+      ],
     );
   }
 }

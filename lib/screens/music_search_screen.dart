@@ -63,6 +63,9 @@ class _MusicSearchScreenState extends State<MusicSearchScreen> {
   Future<void> _search() async {
     final query = _controller.text.trim();
     if (query.isEmpty) return;
+    // Remember every search so it shows up as history next time.
+    unawaited(context.read<StorageService>().addSearchQuery(query));
+    FocusManager.instance.primaryFocus?.unfocus();
     setState(() {
       _loading = true;
       _error = null;
@@ -83,6 +86,13 @@ class _MusicSearchScreenState extends State<MusicSearchScreen> {
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  void _searchFromHistory(String query) {
+    _controller.text = query;
+    _controller.selection =
+        TextSelection.collapsed(offset: _controller.text.length);
+    _search();
   }
 
   Future<void> _loadMore() async {
@@ -146,13 +156,12 @@ class _MusicSearchScreenState extends State<MusicSearchScreen> {
           : _error != null
               ? ErrorView(message: _error!, onRetry: _search)
               : _showSuggestions || _lastQuery.isEmpty
-                  ? SuggestionList(
+                  ? SearchHistoryAndSuggestions(
+                      controller: _controller,
                       suggestions: _suggestionList,
-                      hintText: 'Search for music to get started',
-                      onSelected: (suggestion) {
-                        _controller.text = suggestion;
-                        _search();
-                      },
+                      onSearch: _search,
+                      onSearchFromHistory: _searchFromHistory,
+                      emptyHint: 'Search for music to get started',
                     )
                   : NotificationListener<ScrollNotification>(
                       onNotification: (notification) {

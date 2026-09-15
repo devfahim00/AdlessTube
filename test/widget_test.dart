@@ -5,6 +5,7 @@ import 'package:adlesstube/main.dart';
 import 'package:adlesstube/download_service.dart';
 import 'package:adlesstube/music_playback_service.dart';
 import 'package:adlesstube/storage_service.dart';
+import 'package:adlesstube/video_playback_service.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:provider/provider.dart';
 
@@ -30,6 +31,7 @@ void main() {
 
     final music = MusicPlaybackService(storage!);
     final downloads = DownloadService();
+    final videoPlayback = VideoPlaybackService(storage, music);
 
     await tester.pumpWidget(
       MultiProvider(
@@ -37,6 +39,7 @@ void main() {
           ChangeNotifierProvider.value(value: storage),
           ChangeNotifierProvider.value(value: music),
           ChangeNotifierProvider.value(value: downloads),
+          ChangeNotifierProvider.value(value: videoPlayback),
         ],
         child: const AdlessTubeApp(),
       ),

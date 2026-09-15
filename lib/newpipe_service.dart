@@ -2,6 +2,9 @@ import 'package:newpipeextractor_dart/newpipeextractor_dart.dart';
 import 'models.dart';
 
 class NewPipeService {
+  /// Channel profiles cached per URL so avatars are fetched only once.
+  final Map<String, ChannelProfile> _channelProfileCache = {};
+
   // ═══════════════════ SEARCH ═══════════════════
 
   Future<List<VideoItem>> searchVideos(String query) async {
@@ -125,6 +128,28 @@ class NewPipeService {
       return result.items.map(_toVideo).where(_isPlayable).toList();
     } catch (_) {
       return [];
+    }
+  }
+
+  /// Lightweight channel profile (avatar + subscriber count) used by the
+  /// player and channel screens. Results are cached per channel URL.
+  Future<ChannelProfile> getChannelProfile(String channelUrl) async {
+    if (channelUrl.isEmpty) {
+      return const ChannelProfile(name: '', avatarUrl: '');
+    }
+    final cached = _channelProfileCache[channelUrl];
+    if (cached != null) return cached;
+    try {
+      final info = await ChannelExtractor.getChannelInfo(channelUrl);
+      final profile = ChannelProfile(
+        name: info.name ?? '',
+        avatarUrl: _firstNonEmpty(info.avatars),
+        subscriberCount: info.subscriberCount,
+      );
+      _channelProfileCache[channelUrl] = profile;
+      return profile;
+    } catch (_) {
+      return const ChannelProfile(name: '', avatarUrl: '');
     }
   }
 
@@ -413,6 +438,7 @@ class NewPipeService {
       thumbnailUrl: _extractThumbnail(item),
       uploader: item.uploaderName ?? '',
       uploaderUrl: item.uploaderUrl ?? '',
+      uploaderAvatarUrl: _extractUploaderAvatar(item),
       url: 'https://www.youtube.com/watch?v=$id',
       duration: duration,
       viewCount: item.viewCount,
@@ -464,9 +490,45 @@ class NewPipeService {
     try {
       final thumbs = item.thumbnails;
       if (thumbs != null && thumbs is List && thumbs.isNotEmpty) {
-        return thumbs.first.toString();
+        for (final thumb in thumbs) {
+          final url = thumb?.toString() ?? '';
+          if (url.isNotEmpty) return url;
+        }
       }
     } catch (_) {}
     return '';
   }
+
+  /// StreamInfoItem exposes `uploaderAvatars` — the channel avatar URLs.
+  String _extractUploaderAvatar(dynamic item) {
+    try {
+      final avatars = item.uploaderAvatars;
+      if (avatars != null && avatars is List && avatars.isNotEmpty) {
+        for (final avatar in avatars) {
+          final url = avatar?.toString() ?? '';
+          if (url.isNotEmpty) return url;
+        }
+      }
+    } catch (_) {}
+    return '';
+  }
+
+  String _firstNonEmpty(List<String> urls) {
+    for (final url in urls) {
+      if (url.trim().isNotEmpty) return url;
+    }
+    return '';
+  }
+}
+
+class ChannelProfile {
+  final String name;
+  final String avatarUrl;
+  final int? subscriberCount;
+
+  const ChannelProfile({
+    required this.name,
+    required this.avatarUrl,
+    this.subscriberCount,
+  });
 }

@@ -24,6 +24,7 @@ class ChannelScreen extends StatefulWidget {
 class _ChannelScreenState extends State<ChannelScreen>
     with SingleTickerProviderStateMixin {
   final _service = NewPipeService();
+  late ChannelItem _channel;
   List<VideoItem> _videos = [];
   List<VideoItem> _shorts = [];
   PageToken? _videosNext;
@@ -37,8 +38,33 @@ class _ChannelScreenState extends State<ChannelScreen>
   @override
   void initState() {
     super.initState();
+    _channel = widget.channel;
     _tab = TabController(length: 2, vsync: this);
     _load();
+    _loadAvatarIfMissing();
+  }
+
+  /// Channel entries created from a video page often carry no avatar —
+  /// fetch the real channel profile (avatar + subscriber count) then.
+  Future<void> _loadAvatarIfMissing() async {
+    if (_channel.thumbnailUrl.isNotEmpty) return;
+    final url = _channel.url;
+    if (url.isEmpty) return;
+    try {
+      final profile = await _service.getChannelProfile(url);
+      if (profile.avatarUrl.isEmpty && profile.name.isEmpty) return;
+      if (!mounted) return;
+      setState(() {
+        _channel = ChannelItem(
+          url: url,
+          name: profile.name.isNotEmpty ? profile.name : _channel.name,
+          thumbnailUrl: profile.avatarUrl,
+          subscriberCount:
+              profile.subscriberCount ?? _channel.subscriberCount,
+          description: _channel.description,
+        );
+      });
+    } catch (_) {}
   }
 
   @override
@@ -156,20 +182,10 @@ class _ChannelScreenState extends State<ChannelScreen>
             padding: const EdgeInsets.all(16),
             child: Row(
               children: [
-                CircleAvatar(
+                ChannelAvatar(
+                  avatarUrl: _channel.thumbnailUrl,
+                  name: _channel.name,
                   radius: 32,
-                  backgroundColor: Colors.grey[800],
-                  backgroundImage: widget.channel.thumbnailUrl.isNotEmpty
-                      ? NetworkImage(widget.channel.thumbnailUrl)
-                      : null,
-                  child: widget.channel.thumbnailUrl.isEmpty
-                      ? Text(
-                          widget.channel.name.isNotEmpty
-                              ? widget.channel.name[0].toUpperCase()
-                              : '?',
-                          style: const TextStyle(fontSize: 24),
-                        )
-                      : null,
                 ),
                 const SizedBox(width: 16),
                 Expanded(
@@ -177,16 +193,16 @@ class _ChannelScreenState extends State<ChannelScreen>
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        widget.channel.name,
+                        _channel.name,
                         style: const TextStyle(
                           fontSize: 18,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
-                      if (widget.channel.subscriberCount != null) ...[
+                      if (_channel.subscriberCount != null) ...[
                         const SizedBox(height: 4),
                         Text(
-                          '${widget.channel.subscriberCount} subscribers',
+                          '${_channel.subscriberCount} subscribers',
                           style: TextStyle(
                               color: Colors.grey[400], fontSize: 13),
                         ),
@@ -198,9 +214,9 @@ class _ChannelScreenState extends State<ChannelScreen>
             ),
           ),
           SubscribeButton(
-            channelUrl: widget.channel.url,
-            channelName: widget.channel.name,
-            thumbnail: widget.channel.thumbnailUrl,
+            channelUrl: _channel.url,
+            channelName: _channel.name,
+            thumbnail: _channel.thumbnailUrl,
           ),
           const Divider(),
           TabBar(
