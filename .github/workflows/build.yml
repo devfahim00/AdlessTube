@@ -5,7 +5,7 @@ on:
     branches: [ main, master ]
   pull_request:
     branches: [ main, master ]
-  workflow_dispatch:  # Manual trigger
+  workflow_dispatch:
 
 jobs:
   build:
@@ -31,19 +31,51 @@ jobs:
       - name: Verify Flutter
         run: flutter --version
 
+      # ========== KEYSTORE SETUP ==========
+      - name: Decode Keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 --decode > android/app/upload-keystore.jks
+
+      - name: Create key.properties
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          cat > android/key.properties <<EOF
+          storePassword=$KEYSTORE_PASSWORD
+          keyPassword=$KEY_PASSWORD
+          keyAlias=$KEY_ALIAS
+          storeFile=upload-keystore.jks
+          EOF
+          echo "---- key.properties ----"
+          cat android/key.properties
+
+      # ========== DEPENDENCIES ==========
       - name: Get dependencies
         run: flutter pub get
 
       - name: Analyze project
         run: flutter analyze
-        continue-on-error: true  # Analyze fail হলেও build চলবে
+        continue-on-error: true
 
-      - name: Build APK (release)
+      # ========== BUILD ==========
+      - name: Build APK (split per ABI)
         run: flutter build apk --release --split-per-abi
 
-      - name: Build APK (universal - সব ডিভাইসে চলবে)
+      - name: Build APK (universal)
         run: flutter build apk --release
 
+      # ========== VERIFY SIGNATURE ==========
+      - name: Verify APK signature
+        run: |
+          APKSIGNER=$(find $ANDROID_HOME/build-tools -name apksigner | sort -V | tail -n 1)
+          echo "Using: $APKSIGNER"
+          $APKSIGNER verify --print-certs build/app/outputs/flutter-apk/app-release.apk
+
+      # ========== UPLOAD ARTIFACTS ==========
       - name: Upload split APKs
         uses: actions/upload-artifact@v4
         with:
