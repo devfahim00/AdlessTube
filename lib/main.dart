@@ -5,6 +5,7 @@ import 'screens.dart';
 import 'music_playback_service.dart';
 import 'storage_service.dart';
 import 'region_select_screen.dart';
+import 'service_select_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -54,6 +55,9 @@ class _RootRouter extends StatelessWidget {
     final storage = context.watch<StorageService>();
     if (!storage.hasSelectedRegion) {
       return const RegionSelectScreen();
+    }
+    if (!storage.hasSelectedServices) {
+      return const ServiceSelectScreen();
     }
     return const MainShell();
   }
