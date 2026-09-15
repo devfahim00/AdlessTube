@@ -14,6 +14,13 @@ class StorageService extends ChangeNotifier {
   static const _themeModeKey = 'theme_mode';
   static const _defaultQualityKey = 'default_quality';
   static const _musicAutoplayKey = 'music_autoplay';
+  static const _servicesSelectedKey = 'services_selected';
+  static const _enabledServicesKey = 'enabled_services';
+
+  /// Available service keys
+  static const serviceYoutube = 'youtube';
+  static const serviceShorts = 'shorts';
+  static const serviceMusic = 'music';
 
   Future<void> init() async {
     await Hive.initFlutter();
@@ -34,6 +41,32 @@ class StorageService extends ChangeNotifier {
   Future<void> setRegion(String code) async {
     await Hive.box(_settingsBox).put(_regionKey, code);
     await Hive.box(_settingsBox).put(_regionSelectedKey, true);
+    notifyListeners();
+  }
+
+  // ─────────── Services (YouTube / Shorts / Music) ───────────
+  bool get hasSelectedServices =>
+      Hive.box(_settingsBox).get(_servicesSelectedKey, defaultValue: false);
+
+  /// Returns the set of enabled service keys. Defaults to all three.
+  Set<String> get enabledServices {
+    final raw = Hive.box(_settingsBox).get(_enabledServicesKey);
+    if (raw is List && raw.isNotEmpty) {
+      return raw.map((e) => e.toString()).toSet();
+    }
+    // Default: everything enabled (for existing users)
+    return {serviceYoutube, serviceShorts, serviceMusic};
+  }
+
+  bool isServiceEnabled(String service) => enabledServices.contains(service);
+
+  Future<void> setEnabledServices(Set<String> services) async {
+    // Always keep at least one service
+    final safe = services.isEmpty
+        ? {serviceYoutube}
+        : services;
+    await Hive.box(_settingsBox).put(_enabledServicesKey, safe.toList());
+    await Hive.box(_settingsBox).put(_servicesSelectedKey, true);
     notifyListeners();
   }
 
@@ -81,7 +114,8 @@ class StorageService extends ChangeNotifier {
   }
 
   ThemeMode get themeMode {
-    final value = Hive.box(_settingsBox).get(_themeModeKey, defaultValue: 'auto');
+    final value =
+        Hive.box(_settingsBox).get(_themeModeKey, defaultValue: 'auto');
     return switch (value) {
       'light' => ThemeMode.light,
       'dark' => ThemeMode.dark,
@@ -134,7 +168,6 @@ class StorageService extends ChangeNotifier {
   }
 
   // ─────────── Subscriptions ───────────
-  /// Channel name → subscription info map
   Map<String, Map<String, dynamic>> getSubscriptions() {
     final box = Hive.box(_subscriptionsBox);
     return {
