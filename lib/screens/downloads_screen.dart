@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../download_service.dart';
 import '../models.dart';
 import '../music_playback_service.dart';
+import '../widgets.dart';
 import 'music_player_screen.dart';
 import 'player_screen.dart';
 
@@ -141,12 +142,17 @@ class _DownloadTile extends StatelessWidget {
                 child: Icon(
                     item.isMusic ? Icons.music_note : Icons.videocam),
               )
-            : Image.network(
-                item.thumbnailUrl,
+            : VideoThumbnail(
+                videoId: item.videoId,
+                fallbackUrl: item.thumbnailUrl,
                 width: item.isMusic ? 52 : 100,
                 height: 56,
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => Container(
+                placeholder: Container(
+                  width: item.isMusic ? 52 : 100,
+                  height: 56,
+                  color: theme.colorScheme.surfaceContainerHighest,
+                ),
+                errorWidget: Container(
                   width: item.isMusic ? 52 : 100,
                   height: 56,
                   color: theme.colorScheme.surfaceContainerHighest,

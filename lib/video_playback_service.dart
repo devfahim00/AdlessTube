@@ -137,7 +137,11 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
         }
         await _player!.play();
       } else {
-        final available = await _service.getAvailableStreams(video.url);
+        // Hard timeouts: a hung extraction must surface as a retryable
+        // error, not an eternal spinner on the player page.
+        final available = await _service
+            .getAvailableStreams(video.url)
+            .timeout(const Duration(seconds: 25));
         if (available.isEmpty) {
           throw StateError('No playable stream found.');
         }
@@ -158,7 +162,9 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
           }
         }
         // Dubbed audio tracks (free: the stream fetch is already cached).
-        audioTracks = await _service.getAudioTracks(video.url);
+        audioTracks = await _service
+            .getAudioTracks(video.url)
+            .timeout(const Duration(seconds: 12));
         currentAudioTrack = _pickDefaultAudioTrack();
         await _openStream(currentStream!, start: savedPosition);
         await _player!.play();

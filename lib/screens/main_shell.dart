@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -8,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../storage_service.dart';
 import '../update_service.dart';
 import '../video_playback_service.dart';
+import '../widgets.dart';
 import 'home_screen.dart';
 import 'library_screen.dart';
 import 'menu_screen.dart';
@@ -263,17 +263,17 @@ class _MiniPlayer extends StatelessWidget {
                                 child: const Icon(Icons.videocam,
                                     color: Colors.white70),
                               )
-                            : CachedNetworkImage(
-                                imageUrl: video.thumbnailUrl,
+                            : VideoThumbnail(
+                                videoId: video.id,
+                                fallbackUrl: video.thumbnailUrl,
                                 width: 96,
                                 height: 54,
-                                fit: BoxFit.cover,
-                                placeholder: (_, __) => Container(
+                                placeholder: Container(
                                   width: 96,
                                   height: 54,
                                   color: Colors.black,
                                 ),
-                                errorWidget: (_, __, ___) => Container(
+                                errorWidget: Container(
                                   width: 96,
                                   height: 54,
                                   color: Colors.black,

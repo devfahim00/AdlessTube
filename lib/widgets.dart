@@ -70,6 +70,120 @@ class ChannelAvatar extends StatelessWidget {
   }
 }
 
+/// Crisp YouTube video thumbnail with a resolution fallback chain.
+///
+/// The extractor hands out whatever variant it found (hq, mq, …) which made
+/// later feed items look pixelated while early ones were sharp. This widget
+/// instead always starts from the video id: it tries `maxresdefault`
+/// (1280px — full sharpness on any phone) and falls back to `hqdefault`
+/// (480px, exists for every video) when the HD version is missing. Failures
+/// are remembered per id so a missing maxres is never re-requested.
+class VideoThumbnail extends StatefulWidget {
+  final String videoId;
+
+  /// Used only when the id is unavailable (never for YouTube items).
+  final String fallbackUrl;
+  final double? width;
+  final double? height;
+  final BoxFit fit;
+  final Widget? placeholder;
+  final Widget? errorWidget;
+
+  const VideoThumbnail({
+    super.key,
+    required this.videoId,
+    this.fallbackUrl = '',
+    this.width,
+    this.height,
+    this.fit = BoxFit.cover,
+    this.placeholder,
+    this.errorWidget,
+  });
+
+  @override
+  State<VideoThumbnail> createState() => _VideoThumbnailState();
+
+  /// Video ids known to have no maxresdefault.jpg — skip straight to hq.
+  static final Set<String> _noMaxRes = {};
+}
+
+class _VideoThumbnailState extends State<VideoThumbnail> {
+  late String _url;
+  bool _fellBack = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _url = _pickUrl();
+  }
+
+  @override
+  void didUpdateWidget(covariant VideoThumbnail oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.videoId != widget.videoId) {
+      _fellBack = false;
+      _url = _pickUrl();
+    }
+  }
+
+  String _pickUrl() {
+    final id = widget.videoId;
+    if (id.isEmpty) return widget.fallbackUrl;
+    if (VideoThumbnail._noMaxRes.contains(id)) {
+      return 'https://i.ytimg.com/vi/$id/hqdefault.jpg';
+    }
+    return 'https://i.ytimg.com/vi/$id/maxresdefault.jpg';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final fallback = widget.errorWidget ??
+        Container(
+          width: widget.width,
+          height: widget.height,
+          color: theme.colorScheme.surfaceContainerHighest,
+          child: const Icon(Icons.broken_image, size: 40),
+        );
+
+    if (_url.isEmpty) return fallback;
+
+    return CachedNetworkImage(
+      imageUrl: _url,
+      width: widget.width,
+      height: widget.height,
+      fit: widget.fit,
+      placeholder: (_, __) => widget.placeholder ??
+          Container(
+            width: widget.width,
+            height: widget.height,
+            color: theme.colorScheme.surfaceContainerHighest,
+          ),
+      errorWidget: (_, __, ___) {
+        final id = widget.videoId;
+        if (!_fellBack && id.isNotEmpty) {
+          // maxres missing for this upload — remember and drop to hq.
+          _fellBack = true;
+          VideoThumbnail._noMaxRes.add(id);
+          final hqUrl = 'https://i.ytimg.com/vi/$id/hqdefault.jpg';
+          if (hqUrl != _url) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) setState(() => _url = hqUrl);
+            });
+            return widget.placeholder ??
+                Container(
+                  width: widget.width,
+                  height: widget.height,
+                  color: theme.colorScheme.surfaceContainerHighest,
+                );
+          }
+        }
+        return fallback;
+      },
+    );
+  }
+}
+
 /// Compact horizontal video row used in search results, related videos,
 /// channel listings and history.
 class VideoTile extends StatelessWidget {
@@ -90,14 +204,14 @@ class VideoTile extends StatelessWidget {
               borderRadius: BorderRadius.circular(8),
               child: Stack(
                 children: [
-                  CachedNetworkImage(
-                    imageUrl: video.thumbnailUrl,
+                  VideoThumbnail(
+                    videoId: video.id,
+                    fallbackUrl: video.thumbnailUrl,
                     width: 140,
                     height: 80,
-                    fit: BoxFit.cover,
-                    placeholder: (_, __) => Container(
+                    placeholder: Container(
                         width: 140, height: 80, color: Colors.grey[800]),
-                    errorWidget: (_, __, ___) => Container(
+                    errorWidget: Container(
                       width: 140,
                       height: 80,
                       color: Colors.grey[800],
@@ -182,13 +296,13 @@ class YouTubeVideoTile extends StatelessWidget {
             child: Stack(
               fit: StackFit.expand,
               children: [
-                CachedNetworkImage(
-                  imageUrl: video.thumbnailUrl,
-                  fit: BoxFit.cover,
-                  placeholder: (_, __) => Container(
+                VideoThumbnail(
+                  videoId: video.id,
+                  fallbackUrl: video.thumbnailUrl,
+                  placeholder: Container(
                     color: theme.colorScheme.surfaceContainerHighest,
                   ),
-                  errorWidget: (_, __, ___) => Container(
+                  errorWidget: Container(
                     color: theme.colorScheme.surfaceContainerHighest,
                     child: const Icon(Icons.broken_image, size: 44),
                   ),
@@ -295,17 +409,17 @@ class MusicListTile extends StatelessWidget {
                 color: theme.colorScheme.surfaceContainerHighest,
                 child: const Icon(Icons.music_note),
               )
-            : CachedNetworkImage(
-                imageUrl: song.thumbnailUrl,
+            : VideoThumbnail(
+                videoId: song.id,
+                fallbackUrl: song.thumbnailUrl,
                 width: 52,
                 height: 52,
-                fit: BoxFit.cover,
-                placeholder: (_, __) => Container(
+                placeholder: Container(
                   width: 52,
                   height: 52,
                   color: theme.colorScheme.surfaceContainerHighest,
                 ),
-                errorWidget: (_, __, ___) => Container(
+                errorWidget: Container(
                   width: 52,
                   height: 52,
                   color: theme.colorScheme.surfaceContainerHighest,

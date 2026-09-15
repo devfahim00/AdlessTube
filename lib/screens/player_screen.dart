@@ -64,10 +64,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _loadRelated();
   }
 
-  Future<void> _loadRelated() async {
+  Future<void> _loadRelated({bool force = false}) async {
     setState(() => _loadingRelated = true);
     try {
-      final rel = await _service.getRelatedVideos(widget.video.url);
+      final rel = await _service.getRelatedVideos(
+        widget.video.url,
+        forceRefresh: force,
+      );
       if (mounted) {
         setState(() => _related = rel.where((v) => !v.isLive).toList());
       }
@@ -132,6 +135,49 @@ class _PlayerScreenState extends State<PlayerScreen> {
   // ─────────── Settings (gear) sheet ───────────
 
   static const _speeds = <double>[0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
+
+  /// Dedicated dubbing-language sheet — reachable straight from the
+  /// audio pill under the video, no gear menu needed.
+  Future<void> _openAudioSheet() async {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: isDark ? Colors.grey[900] : null,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 6),
+              child: Text(
+                'Audio language',
+                style: TextStyle(
+                  color: isDark ? Colors.white : null,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                ),
+              ),
+            ),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 340),
+              child: ListView(
+                shrinkWrap: true,
+                children: [
+                  for (final track in _vps.audioTracks)
+                    _audioTrackRow(track, isDark, sheetContext),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
 
   Future<void> _openSettingsSheet() async {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -208,31 +254,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   ],
                 ),
               ),
-            // Dubbed audio languages (only when the video has several).
-            if (widget.download == null && _vps.audioTracks.length > 1) ...[
-              const Divider(height: 24),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 6),
-                child: Text(
-                  'Audio language',
-                  style: TextStyle(
-                    color: isDark ? Colors.white : null,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 15,
-                  ),
-                ),
-              ),
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxHeight: 220),
-                child: ListView(
-                  shrinkWrap: true,
-                  children: [
-                    for (final track in _vps.audioTracks)
-                      _audioTrackRow(track, isDark, sheetContext),
-                  ],
-                ),
-              ),
-            ],
+            // Dubbed audio languages live in their own dedicated sheet
+            // reachable from the audio pill in the action row.
             const SizedBox(height: 8),
           ],
         ),
@@ -572,6 +595,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final storage = context.watch<StorageService>();
     final saved = storage.isVideoSaved(widget.video.id);
 
+    // The page must react to playback-service state by itself — the old
+    // code only rebuilt on unrelated setStates, so the body could stay on
+    // the loading spinner forever while the video happily played above.
+    final vpsLoading =
+        context.select<VideoPlaybackService, bool>((v) => v.loading);
+    final vpsError =
+        context.select<VideoPlaybackService, String?>((v) => v.error);
+
     final video = Video(
       controller: _vps.controller,
       controls: (state) => YouTubeVideoControls(
@@ -622,7 +653,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
               ),
             ),
           ),
-          Expanded(child: _buildBody(storage, saved)),
+          Expanded(child: _buildBody(storage, saved, vpsLoading, vpsError)),
         ],
       ),
     );
@@ -649,11 +680,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
     );
   }
 
-  Widget _buildBody(StorageService storage, bool saved) {
-    if (_vps.loading) {
+  Widget _buildBody(
+    StorageService storage,
+    bool saved,
+    bool vpsLoading,
+    String? vpsError,
+  ) {
+    if (vpsLoading) {
       return const Center(child: CircularProgressIndicator());
     }
-    if (_vps.error != null) {
+    if (vpsError != null) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
@@ -663,7 +699,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
               const Icon(Icons.error_outline, size: 60, color: Colors.red),
               const SizedBox(height: 16),
               Text(
-                _vps.error!,
+                vpsError,
                 textAlign: TextAlign.center,
                 style: const TextStyle(color: Colors.white),
               ),
@@ -709,6 +745,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 highlight: saved,
                 onTap: () => storage.toggleSavedVideo(video),
               ),
+              // Dubbed videos get a dedicated audio-language button —
+              // no need to hunt through the gear menu.
+              _AudioLanguagePill(onTap: _openAudioSheet),
               _actionPill(
                 icon: Icons.share,
                 label: 'Share',
@@ -817,10 +856,21 @@ class _PlayerScreenState extends State<PlayerScreen> {
           )
         else if (_related.isEmpty)
           Padding(
-            padding: const EdgeInsets.all(16),
-            child: Text(
-              'No related videos',
-              style: TextStyle(color: Colors.grey[600]),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'No related videos',
+                    style: TextStyle(color: Colors.grey[600]),
+                  ),
+                ),
+                TextButton.icon(
+                  onPressed: () => _loadRelated(force: true),
+                  icon: const Icon(Icons.refresh, size: 16),
+                  label: const Text('Retry'),
+                ),
+              ],
             ),
           )
         else
@@ -862,6 +912,65 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   label,
                   style: TextStyle(
                     color: highlight ? Colors.red : Colors.white,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Dedicated audio-language pill shown only on videos that actually carry
+/// dubbed tracks. Shows the active language and glows red while a dub
+/// (not the original) is selected.
+class _AudioLanguagePill extends StatelessWidget {
+  final VoidCallback onTap;
+
+  const _AudioLanguagePill({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final vps = context.watch<VideoPlaybackService>();
+    if (vps.audioTracks.length < 2) return const SizedBox.shrink();
+
+    final current = vps.currentAudioTrack;
+    final dubbed = !(current?.isOriginal ?? true);
+    var label = 'Audio';
+    final locale = current?.locale ?? '';
+    if (locale.isNotEmpty) {
+      label = locale.length <= 3
+          ? locale.toUpperCase()
+          : locale.substring(0, 3).toUpperCase();
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: Material(
+        color: dubbed
+            ? Colors.red.withValues(alpha: 0.25)
+            : Colors.white.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(20),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(20),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.record_voice_over,
+                  size: 20,
+                  color: dubbed ? Colors.red : Colors.white,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  label,
+                  style: TextStyle(
+                    color: dubbed ? Colors.red : Colors.white,
                     fontWeight: FontWeight.w500,
                   ),
                 ),

@@ -307,12 +307,53 @@ class NewPipeService {
 
   // ═══════════════════ RELATED ═══════════════════
 
-  Future<List<VideoItem>> getRelatedVideos(String videoUrl) async {
+  // Related lists are shared across service instances (player page, mini
+  // player re-entry, feed warm-up) — a static cache makes going back into
+  // a video page instant instead of re-fetching everything.
+  static const _relatedCacheTtl = Duration(minutes: 30);
+  static const _relatedCacheMaxEntries = 12;
+  static final Map<String, List<VideoItem>> _relatedCache = {};
+  static final Map<String, DateTime> _relatedCacheTimes = {};
+
+  /// Videos related to [videoUrl]. Served from cache when fresh; the network
+  /// call has a hard timeout so a hanging extractor can never freeze the
+  /// player page spinner. [forceRefresh] bypasses the cache read.
+  Future<List<VideoItem>> getRelatedVideos(
+    String videoUrl, {
+    bool forceRefresh = false,
+  }) async {
+    final cached = _relatedCache[videoUrl];
+    final cachedAt = _relatedCacheTimes[videoUrl];
+    if (!forceRefresh &&
+        cached != null &&
+        cachedAt != null &&
+        DateTime.now().difference(cachedAt) < _relatedCacheTtl) {
+      return cached;
+    }
     try {
-      final response = await ServiceExtractor.getRelatedItems(0, videoUrl);
-      return response.videos.map(_toVideo).where(_isPlayable).toList();
+      final response = await ServiceExtractor.getRelatedItems(0, videoUrl)
+          .timeout(const Duration(seconds: 15));
+      final videos = response.videos.map(_toVideo).where(_isPlayable).toList();
+      if (videos.isNotEmpty) {
+        if (_relatedCache.length >= _relatedCacheMaxEntries &&
+            !_relatedCache.containsKey(videoUrl)) {
+          final oldest = _relatedCacheTimes.keys.toList()
+            ..sort((a, b) =>
+                _relatedCacheTimes[a]!.compareTo(_relatedCacheTimes[b]!));
+          final excess =
+              _relatedCache.length - _relatedCacheMaxEntries + 1;
+          for (final key in oldest.take(excess)) {
+            _relatedCache.remove(key);
+            _relatedCacheTimes.remove(key);
+          }
+        }
+        _relatedCache[videoUrl] = videos;
+        _relatedCacheTimes[videoUrl] = DateTime.now();
+      }
+      return videos;
     } catch (_) {
-      return [];
+      // Timeout/error — stale cache beats an empty list.
+      return cached ?? const [];
     }
   }
 

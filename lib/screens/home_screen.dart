@@ -31,24 +31,29 @@ class _HomeScreenState extends State<HomeScreen> {
   final List<VideoItem> _feed = [];
   final Set<String> _seen = {};
   Set<String> _watchedIds = {};
+  Set<String> _recentlyShown = {};
+  final Set<String> _newShown = {};
   List<FeedSource> _sources = [];
   bool _loading = true;
   bool _loadingMore = false;
   String? _error;
   bool _discovering = false;
+  late final StorageService _storage;
 
   @override
   void initState() {
     super.initState();
+    _storage = context.read<StorageService>();
     _initSources();
     unawaited(_loadInitial());
   }
 
   void _initSources() {
-    final storage = context.read<StorageService>();
-    // Recently watched videos are not repeated in the feed.
-    _watchedIds = storage.getHistory().map((v) => v.id).toSet();
-    _sources = _recommendations.buildLocalSources(storage);
+    // Recently watched videos are not repeated in the feed, and neither are
+    // videos the feed recently showed — refresh must actually change it.
+    _watchedIds = _storage.getHistory().map((v) => v.id).toSet();
+    _recentlyShown = _storage.getShownFeedIds().difference(_watchedIds);
+    _sources = _recommendations.buildLocalSources(_storage);
     unawaited(_discoverSimilar());
   }
 
@@ -60,7 +65,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _discovering = true;
     try {
       final found = await _recommendations.discoverSimilarChannels(
-        context.read<StorageService>(),
+        _storage,
         existing: _sources,
       );
       if (found.isNotEmpty && mounted) {
@@ -81,6 +86,12 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       await _fill(target: 14);
       if (_feed.isEmpty) {
+        // Everything might be filtered out by the seen-memory (fresh install
+        // with lots of history) — retry once without it before giving up.
+        _recentlyShown = {};
+        await _fill(target: 14);
+      }
+      if (_feed.isEmpty) {
         throw StateError(
             'Could not load the home feed. Check your connection and pull to retry.');
       }
@@ -93,49 +104,82 @@ class _HomeScreenState extends State<HomeScreen> {
 
   /// Manual refresh only — switching tabs never triggers this. Refreshing
   /// rebuilds the recommendation sources so new watches, saves, searches and
-  /// subscriptions immediately change the mix.
+  /// subscriptions immediately change the mix, and skips what was already
+  /// shown so the list genuinely looks different every time.
   Future<void> _refresh() async {
     _feed.clear();
     _seen.clear();
+    _newShown.clear();
     _initSources();
     await _loadInitial();
   }
 
   /// Keeps fetching from the available sources until [target] new videos
-  /// have been added (or every source is exhausted).
+  /// have been added (or every source is exhausted). Source queues are
+  /// drained one accepted item per source per pass, so the feed interleaves
+  /// subscriptions, recommendations and discovery instead of running all
+  /// videos from one source in a block.
   Future<void> _fill({int target = 10}) async {
-    var added = 0;
-    while (added < target) {
+    var added = _drainQueues(target);
+    if (added > 0 && mounted) setState(() {});
+    var attempts = 0;
+    while (added < target && attempts < 24 && _hasAvailableSources) {
       final source = _recommendations.pickSource(_sources);
       if (source == null) break;
-      final count = await _fetchSource(source);
-      added += count;
-      if (count > 0 && mounted) setState(() {});
+      attempts++;
+      try {
+        await _recommendations.fetch(source);
+      } catch (_) {
+        source.queue.clear();
+        source.exhausted = true;
+      }
+      added += _drainQueues(target - added);
+      if (added > 0 && mounted) setState(() {});
     }
+    _persistShown();
   }
 
-  Future<int> _fetchSource(FeedSource source) async {
-    try {
-      final videos = await _recommendations.fetch(source);
-      return _addUnique(videos);
-    } catch (_) {
-      source.exhausted = true;
-      return 0;
-    }
-  }
-
-  int _addUnique(List<VideoItem> videos) {
-    var added = 0;
-    for (final video in videos) {
-      if (video.isLive || video.isShort) continue;
-      // Never repeat something the user already watched.
-      if (_watchedIds.contains(video.id)) continue;
-      if (_seen.add(video.id)) {
-        _feed.add(video);
-        added++;
+  /// Takes up to [max] acceptable videos out of the source queues,
+  /// round-robin: one video per source per pass → interleaved feed.
+  int _drainQueues(int max) {
+    if (max <= 0) return 0;
+    var count = 0;
+    var progress = true;
+    while (count < max && progress) {
+      progress = false;
+      for (final source in _sources) {
+        if (count >= max) break;
+        while (source.queue.isNotEmpty) {
+          final video = source.queue.removeAt(0);
+          if (_tryAdd(video)) {
+            count++;
+            progress = true;
+            break;
+          }
+        }
       }
     }
-    return added;
+    return count;
+  }
+
+  bool _tryAdd(VideoItem video) {
+    if (video.isLive || video.isShort) return false;
+    // Never repeat something the user already watched.
+    if (_watchedIds.contains(video.id)) return false;
+    // Nor anything the feed showed recently.
+    if (_recentlyShown.contains(video.id)) return false;
+    if (!_seen.add(video.id)) return false;
+    _feed.add(video);
+    _newShown.add(video.id);
+    return true;
+  }
+
+  void _persistShown() {
+    if (_newShown.isEmpty) return;
+    final ids = _newShown.toList();
+    _newShown.clear();
+    _recentlyShown.addAll(ids);
+    unawaited(_storage.rememberShownFeedIds(ids));
   }
 
   Future<void> _loadMore() async {

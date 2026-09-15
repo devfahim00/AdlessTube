@@ -156,12 +156,19 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen> {
                                     child: const Icon(Icons.music_note,
                                         size: 72),
                                   )
-                                : Image.network(
-                                    currentSong.thumbnailUrl,
+                                : VideoThumbnail(
+                                    videoId: currentSong.id,
+                                    fallbackUrl: currentSong.thumbnailUrl,
                                     width: 250,
                                     height: 250,
-                                    fit: BoxFit.cover,
-                                    errorBuilder: (_, __, ___) => Container(
+                                    placeholder: Container(
+                                      width: 250,
+                                      height: 250,
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .surfaceContainerHighest,
+                                    ),
+                                    errorWidget: Container(
                                       width: 250,
                                       height: 250,
                                       color: Theme.of(context)

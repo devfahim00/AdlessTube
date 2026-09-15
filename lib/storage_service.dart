@@ -20,6 +20,11 @@ class StorageService extends ChangeNotifier {
   static const _preferredAudioLocaleKey = 'preferred_audio_locale';
   static const _servicesSelectedKey = 'services_selected';
   static const _enabledServicesKey = 'enabled_services';
+  static const _shownFeedKey = 'shown_feed_ids';
+
+  /// How many recently shown feed videos are remembered — pull-to-refresh
+  /// skips these so the feed genuinely changes between refreshes.
+  static const _shownFeedLimit = 250;
 
   /// Available service keys
   static const serviceYoutube = 'youtube';
@@ -187,6 +192,34 @@ class StorageService extends ChangeNotifier {
   Future<void> setPreferredAudioLocale(String locale) async {
     await Hive.box(_settingsBox).put(_preferredAudioLocaleKey, locale);
     notifyListeners();
+  }
+
+  // ─────────── Feed impressions ───────────
+
+  /// Videos the home feed recently displayed. Pull-to-refresh skips them so
+  /// each refresh actually serves different content (like YouTube's "Not
+  /// interested / seen" memory) instead of echoing the same list.
+  Set<String> getShownFeedIds() {
+    final raw = Hive.box(_settingsBox).get(_shownFeedKey);
+    if (raw is List && raw.isNotEmpty) {
+      return raw.map((e) => e.toString()).toSet();
+    }
+    return <String>{};
+  }
+
+  Future<void> rememberShownFeedIds(Iterable<String> ids) async {
+    final current = getShownFeedIds();
+    current.addAll(ids);
+    var list = current.toList();
+    if (list.length > _shownFeedLimit) {
+      list = list.sublist(list.length - _shownFeedLimit);
+    }
+    await Hive.box(_settingsBox).put(_shownFeedKey, list);
+  }
+
+  /// Wipes the impression memory — "Show me those again".
+  Future<void> clearShownFeedIds() async {
+    await Hive.box(_settingsBox).put(_shownFeedKey, <String>[]);
   }
 
   Map<String, dynamic>? getPlaybackState(String videoId) {
