@@ -15,7 +15,23 @@ class _AdlessAudioHandler extends BaseAudioHandler
   Future<void> Function()? onPrevious;
 
   _AdlessAudioHandler() {
+    // Broadcast state on every playback event
     _player.playbackEventStream.listen((_) => _broadcastState());
+
+    // Keep MediaItem.duration always up-to-date
+    // (critical for Android notification progress bar + seek)
+    _player.durationStream.listen((duration) {
+      final current = mediaItem.valueOrNull;
+      if (current != null && duration != null && current.duration != duration) {
+        mediaItem.add(current.copyWith(duration: duration));
+      }
+      _broadcastState();
+    });
+
+    // Push position updates while playing so notification seek bar stays live
+    _player.positionStream.listen((_) {
+      if (_player.playing) _broadcastState();
+    });
   }
 
   Stream<Duration> get positionStream => _player.positionStream;
@@ -25,6 +41,13 @@ class _AdlessAudioHandler extends BaseAudioHandler
   Future<void> load(MediaItem item, Uri source) async {
     mediaItem.add(item);
     await _player.setAudioSource(AudioSource.uri(source, tag: item));
+
+    // Set duration immediately if already known
+    final d = _player.duration;
+    if (d != null) {
+      mediaItem.add(item.copyWith(duration: d));
+    }
+    _broadcastState();
   }
 
   @override
@@ -67,6 +90,7 @@ class _AdlessAudioHandler extends BaseAudioHandler
       ProcessingState.ready => AudioProcessingState.ready,
       ProcessingState.completed => AudioProcessingState.completed,
     };
+
     playbackState.add(
       PlaybackState(
         controls: [
@@ -80,13 +104,18 @@ class _AdlessAudioHandler extends BaseAudioHandler
           ),
           MediaControl.stop,
         ],
-        systemActions: const {MediaAction.seek},
+        systemActions: const {
+          MediaAction.seek,
+          MediaAction.seekForward,
+          MediaAction.seekBackward,
+        },
         androidCompactActionIndices: const [0, 1, 2],
         processingState: processingState,
         playing: _player.playing,
         updatePosition: _player.position,
         bufferedPosition: _player.bufferedPosition,
         speed: _player.speed,
+        updateTime: DateTime.now(),
       ),
     );
   }
@@ -125,6 +154,7 @@ class MusicPlaybackService extends ChangeNotifier {
           androidNotificationChannelId: 'com.devfahim00.tube.music',
           androidNotificationChannelName: 'AdlessTube Music',
           androidNotificationOngoing: true,
+          androidStopForegroundOnPause: true,
         ),
       ).timeout(const Duration(seconds: 12));
       final handler = localHandler;
@@ -201,12 +231,18 @@ class MusicPlaybackService extends ChangeNotifier {
     notifyListeners();
     try {
       final handler = await _getHandler();
-      if (_song?.id == nextSong.id && handler.mediaItem.value?.id == nextSong.id) {
+
+      // If same song is already loaded, just resume
+      final currentItem = handler.mediaItem.valueOrNull;
+      if (currentItem != null && currentItem.id == nextSong.id) {
         await handler.play();
         return;
       }
+
       final audio = await _service.getBestAudioStream(nextSong.url);
-      if (audio == null) throw Exception('No audio stream found for this song.');
+      if (audio == null) {
+        throw Exception('No audio stream found for this song.');
+      }
       await handler.load(
         MediaItem(
           id: nextSong.id,
