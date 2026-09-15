@@ -1596,6 +1596,7 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen> {
     final currentSong = music.song ?? widget.song;
     final liked = storage.isSongLiked(currentSong.id);
     final navigator = Navigator.of(context);
+
     return PopScope(
       canPop: _leaving,
       onPopInvokedWithResult: (didPop, _) async {
@@ -1607,17 +1608,19 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen> {
       },
       child: Scaffold(
         appBar: AppBar(title: const Text('Now playing')),
-        body: music.isLoading
-            ? const Center(child: CircularProgressIndicator())
-            : music.error != null
-                ? ErrorView(
-                    message: music.error!,
-                    onRetry: () => music.play(widget.song),
-                  )
-                : Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
+        body: music.error != null
+            ? ErrorView(
+                message: music.error!,
+                onRetry: () => music.play(widget.song),
+              )
+            : Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    // Album art + optional loading indicator
+                    Stack(
+                      alignment: Alignment.center,
                       children: [
                         ClipRRect(
                           borderRadius: BorderRadius.circular(16),
@@ -1645,22 +1648,30 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen> {
                                   ),
                                 ),
                         ),
-                        const SizedBox(height: 28),
-                        Text(
-                          currentSong.title,
-                          maxLines: 2,
-                          textAlign: TextAlign.center,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.titleLarge,
-                        ),
-                        const SizedBox(height: 8),
-                        Text(currentSong.uploader),
-                        const SizedBox(height: 18),
-                        StreamBuilder<Duration>(
-                          stream: music.positionStream,
-                          builder: (context, snapshot) {
-                            final position = snapshot.data ?? Duration.zero;
-                            final duration = music.duration;
+                        if (music.isLoading)
+                          const CircularProgressIndicator(),
+                      ],
+                    ),
+                    const SizedBox(height: 28),
+                    Text(
+                      currentSong.title,
+                      maxLines: 2,
+                      textAlign: TextAlign.center,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(currentSong.uploader),
+                    const SizedBox(height: 18),
+                    // Seek bar – uses both position + duration streams
+                    StreamBuilder<Duration>(
+                      stream: music.positionStream,
+                      builder: (context, posSnap) {
+                        return StreamBuilder<Duration?>(
+                          stream: music.durationStream,
+                          builder: (context, durSnap) {
+                            final position = posSnap.data ?? Duration.zero;
+                            final duration = durSnap.data ?? music.duration;
                             final max = duration.inMilliseconds > 0
                                 ? duration.inMilliseconds.toDouble()
                                 : 1.0;
@@ -1673,11 +1684,8 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen> {
                                   value: value,
                                   max: max,
                                   onChanged: duration.inMilliseconds > 0
-                                      ? (milliseconds) => music.seek(
-                                            Duration(
-                                              milliseconds:
-                                                  milliseconds.round(),
-                                            ),
+                                      ? (ms) => music.seek(
+                                            Duration(milliseconds: ms.round()),
                                           )
                                       : null,
                                 ),
@@ -1692,52 +1700,58 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen> {
                               ],
                             );
                           },
+                        );
+                      },
+                    ),
+                    // Controls: Favourite | Previous | Play/Pause | Next | Stop
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        IconButton(
+                          onPressed: () =>
+                              _storage.toggleLikedSong(currentSong),
+                          icon: Icon(
+                            liked ? Icons.favorite : Icons.favorite_border,
+                            color: liked ? Colors.red : null,
+                          ),
+                          tooltip: liked
+                              ? 'Remove from liked songs'
+                              : 'Like song',
                         ),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            IconButton(
-                              onPressed:
-                                  music.canGoPrevious ? music.previous : null,
-                              icon: const Icon(Icons.skip_previous),
-                              tooltip: 'Previous song',
-                            ),
-                            IconButton(
-                              onPressed: () => _storage.toggleLikedSong(currentSong),
-                              icon: Icon(
-                                liked ? Icons.favorite : Icons.favorite_border,
-                                color: liked ? Colors.red : null,
-                              ),
-                              tooltip: liked ? 'Remove from liked songs' : 'Like song',
-                            ),
-                            const SizedBox(width: 20),
-                            IconButton.filled(
-                              iconSize: 38,
-                              onPressed: music.playOrPause,
-                              icon: Icon(
-                                music.isPlaying
-                                    ? Icons.pause
-                                    : Icons.play_arrow,
-                              ),
-                            ),
-                            IconButton(
-                              onPressed: music.canGoNext ||
-                                      _storage.musicAutoplay
-                                  ? music.next
-                                  : null,
-                              icon: const Icon(Icons.skip_next),
-                              tooltip: 'Next song',
-                            ),
-                            IconButton(
-                              onPressed: _stopAndLeave,
-                              icon: const Icon(Icons.stop),
-                              tooltip: 'Stop',
-                            ),
-                          ],
+                        IconButton(
+                          onPressed:
+                              music.canGoPrevious ? music.previous : null,
+                          icon: const Icon(Icons.skip_previous),
+                          tooltip: 'Previous song',
+                        ),
+                        const SizedBox(width: 20),
+                        IconButton.filled(
+                          iconSize: 38,
+                          onPressed: music.isLoading ? null : music.playOrPause,
+                          icon: Icon(
+                            music.isPlaying
+                                ? Icons.pause
+                                : Icons.play_arrow,
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: music.canGoNext ||
+                                  _storage.musicAutoplay
+                              ? music.next
+                              : null,
+                          icon: const Icon(Icons.skip_next),
+                          tooltip: 'Next song',
+                        ),
+                        IconButton(
+                          onPressed: _stopAndLeave,
+                          icon: const Icon(Icons.stop),
+                          tooltip: 'Stop',
                         ),
                       ],
                     ),
-                  ),
+                  ],
+                ),
+              ),
       ),
     );
   }
