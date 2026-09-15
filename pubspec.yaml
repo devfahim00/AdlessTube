@@ -1,7 +1,7 @@
 name: adlesstube
 description: "An ad-free YouTube client built with Flutter and NewPipe Extractor."
 publish_to: 'none'
-version: 1.0.4+2
+version: 2.0.0
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
