@@ -208,10 +208,58 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   ],
                 ),
               ),
+            // Dubbed audio languages (only when the video has several).
+            if (widget.download == null && _vps.audioTracks.length > 1) ...[
+              const Divider(height: 24),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 6),
+                child: Text(
+                  'Audio language',
+                  style: TextStyle(
+                    color: isDark ? Colors.white : null,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 15,
+                  ),
+                ),
+              ),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 220),
+                child: ListView(
+                  shrinkWrap: true,
+                  children: [
+                    for (final track in _vps.audioTracks)
+                      _audioTrackRow(track, isDark, sheetContext),
+                  ],
+                ),
+              ),
+            ],
             const SizedBox(height: 8),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _audioTrackRow(
+      AudioTrackOption track, bool isDark, BuildContext sheetContext) {
+    final isCurrent = _vps.currentAudioTrack?.id == track.id;
+    return ListTile(
+      dense: true,
+      leading: Icon(
+        isCurrent
+            ? Icons.radio_button_checked
+            : Icons.radio_button_unchecked,
+        size: 20,
+        color: isCurrent ? Colors.red : null,
+      ),
+      title: Text(
+        track.label,
+        style: TextStyle(color: isDark ? Colors.white : null),
+      ),
+      onTap: () {
+        Navigator.pop(sheetContext);
+        _vps.setAudioTrackOption(track);
+      },
     );
   }
 
@@ -270,6 +318,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   Future<void> _openDownloadSheet() async {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final downloads = context.read<DownloadService>();
+    final active = downloads.activeFor(widget.video.id);
+    final completed =
+        active == null ? downloads.playableFor(widget.video.id) : null;
+
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: isDark ? Colors.grey[900] : null,
@@ -283,7 +336,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
               child: Text(
-                'Download',
+                active != null
+                    ? 'Downloading'
+                    : completed != null
+                        ? 'Downloaded'
+                        : 'Download',
                 style: TextStyle(
                   color: isDark ? Colors.white : null,
                   fontWeight: FontWeight.bold,
@@ -291,38 +348,142 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 ),
               ),
             ),
-            ListTile(
-              leading: const Icon(Icons.video_library, color: Colors.red),
-              title: const Text('Video + audio'),
-              subtitle: const Text('Best quality with sound (adaptive if needed)'),
-              onTap: () {
-                Navigator.pop(sheetContext);
-                _chooseQualityAndDownload(DownloadType.videoAudio);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.videocam, color: Colors.red),
-              title: const Text('Video only'),
-              subtitle: const Text('Video track without audio'),
-              onTap: () {
-                Navigator.pop(sheetContext);
-                _chooseQualityAndDownload(DownloadType.videoOnly);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.audiotrack, color: Colors.red),
-              title: const Text('Audio only'),
-              subtitle: const Text('Audio track (m4a/webm)'),
-              onTap: () {
-                Navigator.pop(sheetContext);
-                _chooseQualityAndDownload(DownloadType.audio);
-              },
-            ),
+            if (active != null) ...[
+              _downloadingTile(active, isDark, sheetContext),
+            ] else if (completed != null) ...[
+              ListTile(
+                leading: const Icon(Icons.play_circle_fill, color: Colors.red),
+                title: const Text('Play downloaded copy'),
+                subtitle: Text(
+                  'Offline • ${completed.quality == 'Auto' ? 'best' : completed.quality} quality',
+                ),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  Navigator.pushReplacement(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => PlayerScreen(
+                        video: widget.video,
+                        download: completed,
+                      ),
+                    ),
+                  );
+                },
+              ),
+              ListTile(
+                leading: Icon(Icons.delete_outline,
+                    color: isDark ? Colors.red[300] : Colors.red),
+                title: const Text('Delete download'),
+                subtitle:
+                    const Text('Removes the saved files from this device'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _confirmDelete(completed);
+                },
+              ),
+            ] else ...[
+              ListTile(
+                leading: const Icon(Icons.video_library, color: Colors.red),
+                title: const Text('Video + audio'),
+                subtitle: const Text('Best quality with sound (adaptive if needed)'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _chooseQualityAndDownload(DownloadType.videoAudio);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.videocam, color: Colors.red),
+                title: const Text('Video only'),
+                subtitle: const Text('Video track without audio'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _chooseQualityAndDownload(DownloadType.videoOnly);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.audiotrack, color: Colors.red),
+                title: const Text('Audio only'),
+                subtitle: const Text('Audio track (m4a/webm)'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _chooseQualityAndDownload(DownloadType.audio);
+                },
+              ),
+            ],
             const SizedBox(height: 8),
           ],
         ),
       ),
     );
+  }
+
+  /// Live progress + cancel for the in-flight download of this video.
+  Widget _downloadingTile(
+      DownloadItem active, bool isDark, BuildContext sheetContext) {
+    return ListTile(
+      leading: const SizedBox(
+        width: 24,
+        height: 24,
+        child: CircularProgressIndicator(strokeWidth: 2.6),
+      ),
+      title: Text(
+        active.progress > 0
+            ? 'Downloading — ${(active.progress * 100).round()}%'
+            : 'Downloading…',
+        style: TextStyle(color: isDark ? Colors.white : null),
+      ),
+      subtitle: Text(
+        '${_formatBytes(active.receivedBytes)}'
+        '${active.totalBytes > 0 ? ' / ${_formatBytes(active.totalBytes)}' : ''}',
+      ),
+      trailing: TextButton(
+        onPressed: () {
+          Navigator.pop(sheetContext);
+          context.read<DownloadService>().cancel(active);
+        },
+        child: const Text('Cancel'),
+      ),
+    );
+  }
+
+  static String _formatBytes(int bytes) {
+    if (bytes >= 1024 * 1024 * 1024) {
+      return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
+    }
+    if (bytes >= 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
+    if (bytes >= 1024) {
+      return '${(bytes / 1024).toStringAsFixed(0)} KB';
+    }
+    return '$bytes B';
+  }
+
+  Future<void> _confirmDelete(DownloadItem item) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete download?'),
+        content: Text(
+            'The saved files for "${item.title}" will be removed from this device.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Keep'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Colors.red,
+            ),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && mounted) {
+      await context.read<DownloadService>().delete(item);
+    }
   }
 
   Future<void> _chooseQualityAndDownload(DownloadType type) async {
@@ -553,9 +714,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 label: 'Share',
                 onTap: () => Share.share(video.url),
               ),
-              _actionPill(
-                icon: Icons.download_outlined,
-                label: 'Download',
+              _DownloadActionPill(
+                video: video,
                 onTap: _openDownloadSheet,
               ),
               if (Platform.isAndroid)
@@ -697,6 +857,75 @@ class _PlayerScreenState extends State<PlayerScreen> {
               children: [
                 Icon(icon,
                     size: 20, color: highlight ? Colors.red : Colors.white),
+                const SizedBox(width: 6),
+                Text(
+                  label,
+                  style: TextStyle(
+                    color: highlight ? Colors.red : Colors.white,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Download pill that mirrors the live download state: a progress ring with
+/// the percentage while downloading, a red "Downloaded" badge once the
+/// files are on disk, and the normal download action otherwise.
+class _DownloadActionPill extends StatelessWidget {
+  final VideoItem video;
+  final VoidCallback onTap;
+
+  const _DownloadActionPill({required this.video, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final downloads = context.watch<DownloadService>();
+    final active = downloads.activeFor(video.id);
+    final done = active == null && downloads.isDownloaded(video.id);
+
+    final highlight = active != null || done;
+    final label = active != null
+        ? (active.progress > 0 ? '${(active.progress * 100).round()}%' : '…')
+        : done
+            ? 'Downloaded'
+            : 'Download';
+
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: Material(
+        color: highlight
+            ? Colors.red.withValues(alpha: 0.25)
+            : Colors.white.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(20),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(20),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            child: Row(
+              children: [
+                if (active != null)
+                  SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      value: active.progress > 0 ? active.progress : null,
+                      strokeWidth: 2.4,
+                      color: Colors.red,
+                    ),
+                  )
+                else
+                  Icon(
+                    done ? Icons.download_done : Icons.download_outlined,
+                    size: 20,
+                    color: highlight ? Colors.red : Colors.white,
+                  ),
                 const SizedBox(width: 6),
                 Text(
                   label,

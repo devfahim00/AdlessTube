@@ -53,15 +53,46 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen> {
     }
   }
 
-  Future<void> _downloadCurrent() async {
-    final music = context.read<MusicPlaybackService>();
-    final song = music.song ?? widget.song;
+  /// Tap handler for the download action — mirrors the live state:
+  /// in-flight → status snackbar, completed → remove sheet, else → start.
+  Future<void> _onDownloadTapped(VideoItem song) async {
     final downloads = context.read<DownloadService>();
     final messenger = ScaffoldMessenger.of(context);
-    if (downloads.isDownloaded(song.id)) {
+    final active = downloads.activeFor(song.id);
+    if (active != null) {
       messenger.showSnackBar(
-        const SnackBar(content: Text('Already downloaded')),
+        const SnackBar(
+          content: Text('Downloading — manage it from Library ▸ Downloads'),
+        ),
       );
+      return;
+    }
+    if (downloads.isDownloaded(song.id)) {
+      final item = downloads.playableFor(song.id);
+      if (item != null) {
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('Remove download?'),
+            content: Text(
+                '"${song.title}" will be deleted from this device.'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Keep'),
+              ),
+              FilledButton(
+                style: FilledButton.styleFrom(backgroundColor: Colors.red),
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('Remove'),
+              ),
+            ],
+          ),
+        );
+        if (confirmed == true && mounted) {
+          await context.read<DownloadService>().delete(item);
+        }
+      }
       return;
     }
     await downloads.startDownload(
@@ -80,6 +111,8 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen> {
   Widget build(BuildContext context) {
     final storage = context.watch<StorageService>();
     final music = context.watch<MusicPlaybackService>();
+    // Watching downloads keeps the action reactive to progress ticks.
+    context.watch<DownloadService>();
     final currentSong = music.song ?? widget.song;
     final liked = storage.isSongLiked(currentSong.id);
     final navigator = Navigator.of(context);
@@ -243,10 +276,9 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen> {
                             onTap: () =>
                                 _storage.toggleLikedSong(currentSong),
                           ),
-                          _actionIcon(
-                            icon: Icons.download_outlined,
-                            label: 'Download',
-                            onTap: _downloadCurrent,
+                          _MusicDownloadAction(
+                            song: currentSong,
+                            onTap: () => _onDownloadTapped(currentSong),
                           ),
                           _actionIcon(
                             icon: music.isRadioActive
@@ -292,6 +324,61 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen> {
         Text(
           label,
           style: const TextStyle(fontSize: 11),
+        ),
+      ],
+    );
+  }
+}
+
+/// Download action that mirrors the live download state: a progress ring
+/// with the percentage while downloading, a red check once the song is on
+/// disk, and the plain download action otherwise.
+class _MusicDownloadAction extends StatelessWidget {
+  final VideoItem song;
+  final VoidCallback onTap;
+
+  const _MusicDownloadAction({required this.song, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final downloads = context.watch<DownloadService>();
+    final active = downloads.activeFor(song.id);
+    final done = active == null && downloads.isDownloaded(song.id);
+
+    final label = active != null
+        ? (active.progress > 0
+            ? '${(active.progress * 100).round()}%'
+            : 'Downloading')
+        : done
+            ? 'Downloaded'
+            : 'Download';
+    final color = done ? Colors.red : null;
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        IconButton(
+          onPressed: onTap,
+          color: color,
+          tooltip: label,
+          icon: active != null
+              ? SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: CircularProgressIndicator(
+                    value: active.progress > 0 ? active.progress : null,
+                    strokeWidth: 2.6,
+                  ),
+                )
+              : Icon(
+                  done ? Icons.download_done : Icons.download_outlined,
+                  size: 24,
+                  color: color,
+                ),
+        ),
+        Text(
+          label,
+          style: TextStyle(fontSize: 11, color: color),
         ),
       ],
     );

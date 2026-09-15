@@ -5,6 +5,54 @@ class NewPipeService {
   /// Channel profiles cached per URL so avatars are fetched only once.
   final Map<String, ChannelProfile> _channelProfileCache = {};
 
+  // ═══════════════════ STREAM CACHE (shared) ═══════════════════
+  //
+  // NewPipeService is instantiated in many places (screens, playback and
+  // download services), so the resolved-streams cache is static and shared
+  // by every instance. One extraction now serves:
+  //   * the player (video + audio-track pick),
+  //   * the audio-language menu (same fetch),
+  //   * the download flow,
+  //   * Shorts preloading the next video ahead of the swipe.
+  // Stream URLs stay valid for hours, so a short TTL is plenty.
+  static const _streamCacheTtl = Duration(minutes: 15);
+  static const _streamCacheMaxEntries = 24;
+  static final Map<String, YoutubeVideo> _streamCache = {};
+  static final Map<String, DateTime> _streamCacheTimes = {};
+
+  Future<YoutubeVideo> _getVideo(String videoUrl) async {
+    final cached = _streamCache[videoUrl];
+    final cachedAt = _streamCacheTimes[videoUrl];
+    if (cached != null &&
+        cachedAt != null &&
+        DateTime.now().difference(cachedAt) < _streamCacheTtl) {
+      return cached;
+    }
+    final video = await VideoExtractor.getStream(videoUrl);
+    if (_streamCache.length >= _streamCacheMaxEntries &&
+        !_streamCache.containsKey(videoUrl)) {
+      final oldest = _streamCacheTimes.keys.toList()
+        ..sort((a, b) =>
+            _streamCacheTimes[a]!.compareTo(_streamCacheTimes[b]!));
+      final excess = _streamCache.length - _streamCacheMaxEntries + 1;
+      for (final key in oldest.take(excess)) {
+        _streamCache.remove(key);
+        _streamCacheTimes.remove(key);
+      }
+    }
+    _streamCache[videoUrl] = video;
+    _streamCacheTimes[videoUrl] = DateTime.now();
+    return video;
+  }
+
+  /// Resolves streams for [videoUrl] ahead of time (Shorts preload).
+  /// Errors are swallowed — warming is best-effort only.
+  Future<void> warmStreamCache(String videoUrl) async {
+    try {
+      await _getVideo(videoUrl);
+    } catch (_) {}
+  }
+
   // ═══════════════════ SEARCH ═══════════════════
 
   Future<List<VideoItem>> searchVideos(String query) async {
@@ -274,7 +322,7 @@ class NewPipeService {
   /// muxed 360p এ cap থাকে — এটাই সবচেয়ে stable।
   /// Higher quality পেতে চাইলে ভবিষ্যতে youtube_explode_dart use করতে হবে।
   Future<List<VideoStreamInfo>> getAvailableStreams(String videoUrl) async {
-    final video = await VideoExtractor.getStream(videoUrl);
+    final video = await _getVideo(videoUrl);
     final Map<String, VideoStreamInfo> result = {};
 
     // YouTube exposes HD formats as video-only DASH streams. Pair each one
@@ -282,7 +330,8 @@ class NewPipeService {
     try {
       for (final stream in video.videoOnlyStreams) {
         final videoOnlyUrl = stream.url;
-        final audioUrl = video.bestAudioForVideo(stream)?.url;
+        final audioUrl = _bestAudioFor(video,
+            videoFormatSuffix: stream.formatSuffix)?.url;
         if (videoOnlyUrl == null ||
             videoOnlyUrl.isEmpty ||
             audioUrl == null ||
@@ -343,9 +392,11 @@ class NewPipeService {
   }
 
   /// Returns the extractor's highest-quality audio-only stream for Music.
+  /// Prefers the original language on multi-track (dubbed) videos.
   Future<VideoStreamInfo?> getBestAudioStream(String videoUrl) async {
-    final video = await VideoExtractor.getStream(videoUrl);
-    final audio = video.audioWithHighestQuality;
+    final video = await _getVideo(videoUrl);
+    final audio =
+        _bestAudioFor(video) ?? video.audioWithHighestQuality;
     final url = audio?.url;
     if (url == null || url.isEmpty) return null;
     final format = (audio?.formatSuffix ?? audio?.formatName ?? 'audio')
@@ -355,6 +406,123 @@ class NewPipeService {
       quality: 'Audio',
       format: format,
     );
+  }
+
+  /// Distinct selectable audio languages for a video (original + dubs).
+  /// Videos with a single track return a one-element list.
+  Future<List<AudioTrackOption>> getAudioTracks(String videoUrl) async {
+    try {
+      final video = await _getVideo(videoUrl);
+      final groups = <String, List<AudioOnlyStream>>{};
+      for (final stream in video.audioOnlyStreams) {
+        final url = stream.url;
+        if (url == null || url.isEmpty) continue;
+        final locale = (stream.audioTrackLocale ?? '').trim();
+        final rawName = (stream.audioTrackName ?? '').trim();
+        final type =
+            (stream.audioTrackType ?? '').trim().toUpperCase();
+        groups
+            .putIfAbsent('$locale|$rawName|$type', () => [])
+            .add(stream);
+      }
+
+      final tracks = <AudioTrackOption>[];
+      for (final entry in groups.entries) {
+        final streams = entry.value;
+        // Highest-bitrate variant of the language wins.
+        streams.sort(
+            (a, b) => b.averageBitrate.compareTo(a.averageBitrate));
+        final best = streams.first;
+        final url = best.url;
+        if (url == null || url.isEmpty) continue;
+        final locale = (best.audioTrackLocale ?? '').trim();
+        final rawName = (best.audioTrackName ?? '').trim();
+        final type =
+            (best.audioTrackType ?? '').trim().toUpperCase();
+        tracks.add(AudioTrackOption(
+          id: entry.key,
+          label: _audioTrackLabel(rawName, locale, type),
+          locale: locale,
+          type: type,
+          url: url,
+        ));
+      }
+
+      // Original language first, everything else alphabetical.
+      tracks.sort((a, b) {
+        if (a.isOriginal != b.isOriginal) return a.isOriginal ? -1 : 1;
+        return a.label.compareTo(b.label);
+      });
+      return tracks;
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  String _audioTrackLabel(String rawName, String locale, String type) {
+    var base = rawName;
+    if (base.isEmpty) base = locale.isEmpty ? 'Default' : locale;
+    final lower = base.toLowerCase();
+    var suffix = '';
+    if (type == 'ORIGINAL' && !lower.contains('original')) {
+      suffix = ' (original)';
+    } else if (type == 'DUBBED' && !lower.contains('dub')) {
+      suffix = ' (dubbed)';
+    } else if (type == 'DESCRIPTIVE' && !lower.contains('descri')) {
+      suffix = ' (descriptive)';
+    }
+    return base + suffix;
+  }
+
+  /// Audio streams that pair with video, preferring the original language
+  /// and skipping descriptive tracks on multi-language videos.
+  List<AudioOnlyStream> _audioPool(YoutubeVideo video) {
+    final usable = video.audioOnlyStreams
+        .where((s) => (s.url ?? '').isNotEmpty)
+        .toList();
+    if (usable.isEmpty) return usable;
+    var pool = usable
+        .where(
+            (s) => (s.audioTrackType ?? '').toUpperCase() == 'ORIGINAL')
+        .toList();
+    if (pool.isEmpty) {
+      pool = usable
+          .where((s) =>
+              (s.audioTrackType ?? '').toUpperCase() != 'DESCRIPTIVE')
+          .toList();
+    }
+    return pool.isEmpty ? usable : pool;
+  }
+
+  /// Best audio from the pool — container-matched to the video stream when
+  /// possible (m4a with mp4, webm with webm), otherwise highest bitrate.
+  AudioOnlyStream? _bestAudioFor(
+    YoutubeVideo video, {
+    String? videoFormatSuffix,
+  }) {
+    final pool = _audioPool(video);
+    if (pool.isEmpty) return null;
+    final container = (videoFormatSuffix ?? '').toLowerCase();
+    AudioOnlyStream? best;
+    for (final s in pool) {
+      if (best == null) {
+        best = s;
+        continue;
+      }
+      final sMatch = _containerMatches(container, s.formatSuffix);
+      final bMatch = _containerMatches(container, best.formatSuffix);
+      if ((sMatch && !bMatch) ||
+          (sMatch == bMatch && s.averageBitrate > best.averageBitrate)) {
+        best = s;
+      }
+    }
+    return best;
+  }
+
+  bool _containerMatches(String container, String? audioSuffix) {
+    final suffix = (audioSuffix ?? '').toLowerCase();
+    if (container.isEmpty || suffix.isEmpty) return true;
+    return container == suffix;
   }
 
   Future<String?> getBestMuxedStreamUrl(String videoUrl) async {

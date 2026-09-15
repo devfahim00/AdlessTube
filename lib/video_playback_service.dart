@@ -38,6 +38,9 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
   DownloadItem? currentDownload;
   List<VideoStreamInfo> streams = [];
   VideoStreamInfo? currentStream;
+  /// Selectable audio languages (original + dubs) for the current video.
+  List<AudioTrackOption> audioTracks = [];
+  AudioTrackOption? currentAudioTrack;
   double playbackSpeed = 1.0;
 
   bool loading = true;
@@ -106,6 +109,8 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
     currentDownload = download;
     streams = [];
     currentStream = null;
+    audioTracks = [];
+    currentAudioTrack = null;
     playbackSpeed = 1.0;
     loading = true;
     error = null;
@@ -152,6 +157,9 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
             break;
           }
         }
+        // Dubbed audio tracks (free: the stream fetch is already cached).
+        audioTracks = await _service.getAudioTracks(video.url);
+        currentAudioTrack = _pickDefaultAudioTrack();
         await _openStream(currentStream!, start: savedPosition);
         await _player!.play();
       }
@@ -185,6 +193,8 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
     currentDownload = null;
     currentStream = null;
     streams = [];
+    audioTracks = [];
+    currentAudioTrack = null;
     error = null;
     loading = false;
     isPlaying = false;
@@ -243,10 +253,60 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
+  /// Chooses the audio language for a fresh video: the user's remembered
+  /// preference first, then the original track, then the first available.
+  AudioTrackOption? _pickDefaultAudioTrack() {
+    if (audioTracks.isEmpty) return null;
+    final preferred = _storage.preferredAudioLocale;
+    if (preferred.isNotEmpty) {
+      for (final track in audioTracks) {
+        if (track.locale == preferred && !track.isOriginal) return track;
+      }
+    }
+    for (final track in audioTracks) {
+      if (track.isOriginal) return track;
+    }
+    return audioTracks.first;
+  }
+
+  /// Switches the audio language (dub) on the fly — mpv swaps the external
+  /// audio track without restarting the video. The choice is remembered for
+  /// future videos that carry the same dub.
+  Future<void> setAudioTrackOption(AudioTrackOption track) async {
+    if (currentVideo == null) return;
+    currentAudioTrack = track;
+    try {
+      await _player?.setAudioTrack(AudioTrack.uri(
+        track.url,
+        title: track.label,
+        language: track.locale,
+      ));
+    } catch (_) {}
+    if (!track.isOriginal && track.locale.isNotEmpty) {
+      unawaited(_storage.setPreferredAudioLocale(track.locale));
+    }
+    notifyListeners();
+  }
+
+  /// Pauses the background (mini player) video without clearing it — used
+  /// when Shorts start so two things never play at once.
+  Future<void> pauseIfPlaying() async {
+    if (_player != null && isPlaying) {
+      await _player!.pause();
+    }
+  }
+
   Future<void> _openStream(VideoStreamInfo stream, {Duration? start}) async {
     await _player?.open(Media(stream.url, start: start));
-    if (stream.audioUrl != null) {
-      await _player?.setAudioTrack(AudioTrack.uri(stream.audioUrl!));
+    // The picked audio language wins; adaptive streams fall back to the
+    // extractor-paired original audio.
+    final audioUrl = currentAudioTrack?.url ?? stream.audioUrl;
+    if (audioUrl != null) {
+      await _player?.setAudioTrack(AudioTrack.uri(
+        audioUrl,
+        title: currentAudioTrack?.label,
+        language: currentAudioTrack?.locale,
+      ));
     }
   }
 

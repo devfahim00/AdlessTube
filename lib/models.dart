@@ -86,6 +86,30 @@ class VideoStreamInfo {
   });
 }
 
+/// A selectable audio language (original / dubbed / descriptive) for a video.
+class AudioTrackOption {
+  /// Stable key, e.g. `en|English original`.
+  final String id;
+  /// Human label, e.g. `English (original)` or `Bangla (dubbed)`.
+  final String label;
+  /// BCP-47-ish locale from the extractor, e.g. `en`, `bn`.
+  final String locale;
+  /// ORIGINAL | DUBBED | DESCRIPTIVE (empty when unknown).
+  final String type;
+  /// Highest-bitrate stream URL for this track.
+  final String url;
+
+  const AudioTrackOption({
+    required this.id,
+    required this.label,
+    required this.locale,
+    required this.type,
+    required this.url,
+  });
+
+  bool get isOriginal => type == 'ORIGINAL';
+}
+
 /// What kind of file a download produces.
 enum DownloadType {
   /// Muxed file (or paired video+audio files kept together).

@@ -31,6 +31,10 @@ class _MainShellState extends State<MainShell> {
   int _index = 0;
   bool _checkedForUpdate = false;
 
+  /// Where the Shorts exit button lands — recomputed every build so service
+  /// changes are respected. Priority: Home, then Music, then Library.
+  int _shortsExitIndex = 0;
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -87,11 +91,16 @@ class _MainShellState extends State<MainShell> {
       ));
     }
     if (storage.isServiceEnabled(StorageService.serviceShorts)) {
-      items.add(const _NavItem(
+      // items.length here is the Shorts tab index (Home may precede it).
+      final shortsIndex = items.length;
+      items.add(_NavItem(
         Icons.play_circle_outline,
         Icons.play_circle_fill,
         'Shorts',
-        ShortsScreen(),
+        ShortsScreen(
+          active: _index == shortsIndex,
+          onExit: () => setState(() => _index = _shortsExitIndex),
+        ),
       ));
     }
     if (storage.isServiceEnabled(StorageService.serviceMusic)) {
@@ -128,6 +137,15 @@ class _MainShellState extends State<MainShell> {
       _index = 0;
     }
 
+    // Shorts exit target: first of Home ▸ Music ▸ Library.
+    const exitCandidates = {'Home', 'Music', 'Library'};
+    final exitIndex =
+        navItems.indexWhere((item) => exitCandidates.contains(item.label));
+    _shortsExitIndex = exitIndex >= 0 ? exitIndex : 0;
+
+    // The Shorts tab is immersive full-screen — navbar & mini player hide.
+    final onShorts = navItems[_index].label == 'Shorts';
+
     return Scaffold(
       body: Stack(
         children: [
@@ -149,20 +167,34 @@ class _MainShellState extends State<MainShell> {
             bottom: 12,
             child: SafeArea(
               top: false,
-              child: _PillNavBar(
-                items: navItems,
-                currentIndex: _index,
-                onTap: (i) => setState(() => _index = i),
+              child: IgnorePointer(
+                ignoring: onShorts,
+                child: AnimatedOpacity(
+                  opacity: onShorts ? 0.0 : 1.0,
+                  duration: const Duration(milliseconds: 180),
+                  child: _PillNavBar(
+                    items: navItems,
+                    currentIndex: _index,
+                    onTap: (i) => setState(() => _index = i),
+                  ),
+                ),
               ),
             ),
           ),
           // Floating mini player — bottom right, above the pill navbar.
-          const Positioned(
+          Positioned(
             right: 12,
             bottom: 92,
             child: SafeArea(
               top: false,
-              child: _MiniPlayer(),
+              child: IgnorePointer(
+                ignoring: onShorts,
+                child: AnimatedOpacity(
+                  opacity: onShorts ? 0.0 : 1.0,
+                  duration: const Duration(milliseconds: 180),
+                  child: const _MiniPlayer(),
+                ),
+              ),
             ),
           ),
         ],

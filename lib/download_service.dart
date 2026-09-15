@@ -40,6 +40,14 @@ class DownloadService extends ChangeNotifier {
   bool isDownloaded(String videoId) =>
       getAll().any((item) => item.videoId == videoId && item.isCompleted);
 
+  /// The in-flight download for a video, if one is running right now.
+  DownloadItem? activeFor(String videoId) {
+    for (final item in getAll()) {
+      if (item.videoId == videoId && item.isDownloading) return item;
+    }
+    return null;
+  }
+
   /// Best playable local copy for a video (prefers formats with audio).
   DownloadItem? playableFor(String videoId) {
     final completed =

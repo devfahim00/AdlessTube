@@ -17,6 +17,7 @@ class StorageService extends ChangeNotifier {
   static const _themeModeKey = 'theme_mode';
   static const _defaultQualityKey = 'default_quality';
   static const _musicAutoplayKey = 'music_autoplay';
+  static const _preferredAudioLocaleKey = 'preferred_audio_locale';
   static const _servicesSelectedKey = 'services_selected';
   static const _enabledServicesKey = 'enabled_services';
 
@@ -175,6 +176,16 @@ class StorageService extends ChangeNotifier {
 
   Future<void> setMusicAutoplay(bool enabled) async {
     await Hive.box(_settingsBox).put(_musicAutoplayKey, enabled);
+    notifyListeners();
+  }
+
+  /// Audio language the user last picked on a dubbed video — remembered so
+  /// other videos with the same dub default to it (like the YouTube app).
+  String get preferredAudioLocale => Hive.box(_settingsBox)
+      .get(_preferredAudioLocaleKey, defaultValue: '') as String;
+
+  Future<void> setPreferredAudioLocale(String locale) async {
+    await Hive.box(_settingsBox).put(_preferredAudioLocaleKey, locale);
     notifyListeners();
   }
 
