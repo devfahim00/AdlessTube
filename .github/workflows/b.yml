@@ -1,0 +1,60 @@
+name: Generate Keystore
+
+on:
+  workflow_dispatch:  # শুধু manual trigger
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Verify keytool
+        run: keytool -help
+
+      - name: Generate Keystore
+        env:
+          KS_PASS: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASS: ${{ secrets.KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
+          keytool -genkeypair -v \
+            -keystore upload-keystore.jks \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -alias "$KEY_ALIAS" \
+            -storepass "$KS_PASS" \
+            -keypass "$KEY_PASS" \
+            -dname "CN=Droxilen, OU=Mobile, O=DX, L=Dhaka, ST=Dhaka, C=BD"
+
+      - name: Verify Keystore
+        env:
+          KS_PASS: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
+          keytool -list -v -keystore upload-keystore.jks \
+            -storepass "$KS_PASS" -alias "$KEY_ALIAS"
+
+      - name: Convert to Base64
+        run: |
+          base64 upload-keystore.jks | tr -d '\n' > keystore.base64
+          echo "===== BASE64 START ====="
+          cat keystore.base64
+          echo ""
+          echo "===== BASE64 END ====="
+
+      - name: Upload Keystore (JKS)
+        uses: actions/upload-artifact@v4
+        with:
+          name: upload-keystore
+          path: upload-keystore.jks
+
+      - name: Upload Base64
+        uses: actions/upload-artifact@v4
+        with:
+          name: keystore-base64
+          path: keystore.base64
