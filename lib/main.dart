@@ -12,12 +12,13 @@ void main() async {
 
   final storage = StorageService();
   await storage.init();
+  final music = await MusicPlaybackService.create(storage);
 
   runApp(
     MultiProvider(
       providers: [
         ChangeNotifierProvider.value(value: storage),
-        ChangeNotifierProvider(create: (_) => MusicPlaybackService(storage)),
+        ChangeNotifierProvider.value(value: music),
       ],
       child: const AdlessTubeApp(),
     ),

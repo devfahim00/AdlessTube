@@ -789,6 +789,7 @@ class _PlayerScreenState extends State<PlayerScreen>
   void initState() {
     super.initState();
     _storage = context.read<StorageService>();
+    unawaited(context.read<MusicPlaybackService>().stop());
     _player = Player();
     _controller = VideoController(_player);
     WidgetsBinding.instance.addObserver(this);
@@ -1538,7 +1539,26 @@ class _MusicSearchScreenState extends State<MusicSearchScreen> {
                         final song = _results[index];
                         final liked = storage.isSongLiked(song.id);
                         return ListTile(
-                          leading: const Icon(Icons.music_note),
+                          leading: ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: song.thumbnailUrl.isEmpty
+                                ? const SizedBox(
+                                    width: 52,
+                                    height: 52,
+                                    child: Icon(Icons.music_note),
+                                  )
+                                : Image.network(
+                                    song.thumbnailUrl,
+                                    width: 52,
+                                    height: 52,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (_, __, ___) => const SizedBox(
+                                      width: 52,
+                                      height: 52,
+                                      child: Icon(Icons.music_note),
+                                    ),
+                                  ),
+                          ),
                           title: Text(
                             song.title,
                             maxLines: 1,
@@ -1605,7 +1625,6 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen> {
     final music = context.watch<MusicPlaybackService>();
     final currentSong = music.song ?? widget.song;
     final liked = storage.isSongLiked(currentSong.id);
-    final player = music.player;
     final navigator = Navigator.of(context);
     return PopScope(
       canPop: _leaving,
@@ -1668,10 +1687,10 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen> {
                         Text(currentSong.uploader),
                         const SizedBox(height: 18),
                         StreamBuilder<Duration>(
-                          stream: player.stream.position,
+                          stream: music.positionStream,
                           builder: (context, snapshot) {
                             final position = snapshot.data ?? Duration.zero;
-                            final duration = player.state.duration;
+                            final duration = music.duration;
                             final max = duration.inMilliseconds > 0
                                 ? duration.inMilliseconds.toDouble()
                                 : 1.0;
@@ -1684,7 +1703,7 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen> {
                                   value: value,
                                   max: max,
                                   onChanged: duration.inMilliseconds > 0
-                                      ? (milliseconds) => player.seek(
+                                      ? (milliseconds) => music.seek(
                                             Duration(
                                               milliseconds:
                                                   milliseconds.round(),
@@ -1724,7 +1743,7 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen> {
                             const SizedBox(width: 20),
                             IconButton.filled(
                               iconSize: 38,
-                              onPressed: () => player.playOrPause(),
+                              onPressed: music.playOrPause,
                               icon: Icon(
                                 music.isPlaying
                                     ? Icons.pause
@@ -2123,6 +2142,7 @@ class _ShortVideoPageState extends State<_ShortVideoPage> {
 
   Future<void> _start() async {
     _started = true;
+    await context.read<MusicPlaybackService>().stop();
     final preference = context.read<StorageService>().defaultQuality;
     try {
       final streams = await _service.getAvailableStreams(widget.video.url);

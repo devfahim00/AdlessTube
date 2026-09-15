@@ -19,6 +19,8 @@ dependencies:
   media_kit_video: ^1.3.1
   media_kit_libs_video: ^1.0.4
   android_pip: ^2.0.2
+  audio_service: ^0.18.19
+  just_audio: ^0.10.5
 
   # Local storage
   hive: ^2.2.3
