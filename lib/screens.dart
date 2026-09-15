@@ -9,6 +9,7 @@ import 'package:media_kit_video/media_kit_video.dart';
 import 'package:newpipeextractor_dart/newpipeextractor_dart.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'models.dart';
 import 'music_playback_service.dart';
 import 'newpipe_service.dart';
@@ -57,7 +58,7 @@ class _MainShellState extends State<MainShell> {
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('Update available'),
-        content: Text('Version ${update.tag} is available for .'),
+        content: Text('Version ${update.tag} is available.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext),
@@ -1976,13 +1977,21 @@ class MenuScreen extends StatelessWidget {
             onTap: onCheckForUpdate,
           ),
           const Divider(),
-          const Padding(
-            padding: EdgeInsets.all(16),
-            child: Text(
-              'AdlessTube v1.0.3\nAd-free YouTube client',
-              style: TextStyle(color: Colors.grey, fontSize: 12),
-              textAlign: TextAlign.center,
-            ),
+          // Version auto from pubspec.yaml via package_info_plus
+          FutureBuilder<PackageInfo>(
+            future: PackageInfo.fromPlatform(),
+            builder: (context, snapshot) {
+              final version = snapshot.data?.version ?? '...';
+              final build = snapshot.data?.buildNumber ?? '';
+              return Padding(
+                padding: const EdgeInsets.all(16),
+                child: Text(
+                  'AdlessTube v$version${build.isNotEmpty ? '+$build' : ''}\nAd-free YouTube client',
+                  style: const TextStyle(color: Colors.grey, fontSize: 12),
+                  textAlign: TextAlign.center,
+                ),
+              );
+            },
           ),
         ],
       ),
