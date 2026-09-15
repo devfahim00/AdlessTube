@@ -17,6 +17,7 @@ import 'storage_service.dart';
 import 'update_service.dart';
 import 'widgets.dart';
 import 'region_service.dart';
+import 'service_select_screen.dart';
 
 /// ═══════════════════════ MAIN SHELL (Bottom Pill Navbar) ═══════════════════════
 class MainShell extends StatefulWidget {
@@ -29,8 +30,6 @@ class MainShell extends StatefulWidget {
 class _MainShellState extends State<MainShell> {
   int _index = 0;
   bool _checkedForUpdate = false;
-  final _homeScreen = const HomeScreen();
-  final _libraryScreen = const LibraryScreen();
 
   @override
   void didChangeDependencies() {
@@ -76,16 +75,61 @@ class _MainShellState extends State<MainShell> {
     );
   }
 
+  /// Build the list of visible tabs based on enabled services.
+  List<_NavItem> _buildNavItems(StorageService storage) {
+    final items = <_NavItem>[];
+    if (storage.isServiceEnabled(StorageService.serviceYoutube)) {
+      items.add(_NavItem(
+        Icons.home_outlined,
+        Icons.home,
+        'Home',
+        const HomeScreen(),
+      ));
+    }
+    if (storage.isServiceEnabled(StorageService.serviceShorts)) {
+      items.add(_NavItem(
+        Icons.play_circle_outline,
+        Icons.play_circle_fill,
+        'Shorts',
+        const ShortsScreen(),
+      ));
+    }
+    if (storage.isServiceEnabled(StorageService.serviceMusic)) {
+      items.add(_NavItem(
+        Icons.music_note_outlined,
+        Icons.music_note,
+        'Music',
+        const MusicScreen(),
+      ));
+    }
+    // Library & Menu always visible
+    items.add(_NavItem(
+      Icons.video_library_outlined,
+      Icons.video_library,
+      'Library',
+      const LibraryScreen(),
+    ));
+    items.add(_NavItem(
+      Icons.menu,
+      Icons.menu,
+      'Menu',
+      MenuScreen(onCheckForUpdate: () => _checkForUpdate(showUpToDate: true)),
+    ));
+    return items;
+  }
+
   @override
   Widget build(BuildContext context) {
-    final page = switch (_index) {
-      0 => _homeScreen,
-      1 => const ShortsScreen(),
-      2 => const MusicScreen(),
-      3 => _libraryScreen,
-      _ => MenuScreen(
-          onCheckForUpdate: () => _checkForUpdate(showUpToDate: true)),
-    };
+    final storage = context.watch<StorageService>();
+    final navItems = _buildNavItems(storage);
+
+    // Clamp index if services changed
+    if (_index >= navItems.length) {
+      _index = 0;
+    }
+
+    final page = navItems[_index].page;
+
     return Scaffold(
       body: Stack(
         children: [
@@ -97,6 +141,7 @@ class _MainShellState extends State<MainShell> {
             child: SafeArea(
               top: false,
               child: _PillNavBar(
+                items: navItems,
                 currentIndex: _index,
                 onTap: (i) => setState(() => _index = i),
               ),
@@ -108,72 +153,78 @@ class _MainShellState extends State<MainShell> {
   }
 }
 
+class _NavItem {
+  final IconData outlined;
+  final IconData filled;
+  final String label;
+  final Widget page;
+
+  const _NavItem(this.outlined, this.filled, this.label, this.page);
+}
+
 class _PillNavBar extends StatelessWidget {
+  final List<_NavItem> items;
   final int currentIndex;
   final ValueChanged<int> onTap;
 
-  const _PillNavBar({required this.currentIndex, required this.onTap});
+  const _PillNavBar({
+    required this.items,
+    required this.currentIndex,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final items = [
-      (Icons.home_outlined, Icons.home, 'Home'),
-      (Icons.play_circle_outline, Icons.play_circle_fill, 'Shorts'),
-      (Icons.music_note_outlined, Icons.music_note, 'Music'),
-      (Icons.video_library_outlined, Icons.video_library, 'Library'),
-      (Icons.menu, Icons.menu, 'Menu'),
-    ];
-
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-        decoration: BoxDecoration(
-          color: theme.colorScheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(40),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: isDark ? 0.4 : 0.18),
-              blurRadius: 12,
-              offset: const Offset(0, 4),
-            ),
-          ],
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-          children: List.generate(items.length, (i) {
-            final selected = i == currentIndex;
-            final (outlined, filled, _) = items[i];
-            return Expanded(
-              child: GestureDetector(
-                onTap: () => onTap(i),
-                behavior: HitTestBehavior.opaque,
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  padding: const EdgeInsets.symmetric(vertical: 10),
-                  decoration: BoxDecoration(
-                    color: selected
-                        ? theme.colorScheme.primary.withValues(alpha: 0.14)
-                        : Colors.transparent,
-                    borderRadius: BorderRadius.circular(30),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        selected ? filled : outlined,
-                        color: selected
-                            ? theme.colorScheme.primary
-                            : theme.colorScheme.onSurfaceVariant,
-                        size: 22,
-                      ),
-                    ],
-                  ),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(40),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: isDark ? 0.4 : 0.18),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: List.generate(items.length, (i) {
+          final selected = i == currentIndex;
+          final item = items[i];
+          return Expanded(
+            child: GestureDetector(
+              onTap: () => onTap(i),
+              behavior: HitTestBehavior.opaque,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                decoration: BoxDecoration(
+                  color: selected
+                      ? theme.colorScheme.primary.withValues(alpha: 0.14)
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(30),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      selected ? item.filled : item.outlined,
+                      color: selected
+                          ? theme.colorScheme.primary
+                          : theme.colorScheme.onSurfaceVariant,
+                      size: 22,
+                    ),
+                  ],
                 ),
               ),
-            );
-          }),
-        ),
+            ),
+          );
+        }),
+      ),
     );
   }
 }
@@ -1649,7 +1700,7 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen> {
                                   ),
                                 ),
                         ),
-                        if (music.isLoading)
+                        if (music.isLoading && !music.isPlaying)
                           const CircularProgressIndicator(),
                       ],
                     ),
@@ -1728,7 +1779,7 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen> {
                         const SizedBox(width: 20),
                         IconButton.filled(
                           iconSize: 38,
-                          onPressed: music.isLoading ? null : music.playOrPause,
+                          onPressed: music.playOrPause,
                           icon: Icon(
                             music.isPlaying
                                 ? Icons.pause
@@ -1950,6 +2001,21 @@ class MenuScreen extends StatelessWidget {
             ),
           ),
           ListTile(
+            leading: const Icon(Icons.apps, color: Colors.orange),
+            title: const Text('Services'),
+            subtitle: Text(
+              _servicesSummary(storage),
+              style: TextStyle(color: Colors.grey[500], fontSize: 12),
+            ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => const ServiceSelectScreen(fromMenu: true),
+              ),
+            ),
+          ),
+          ListTile(
             leading: const Icon(Icons.settings_outlined),
             title: const Text('Settings'),
             trailing: const Icon(Icons.chevron_right),
@@ -1997,6 +2063,15 @@ class MenuScreen extends StatelessWidget {
       ),
     );
   }
+}
+
+
+String _servicesSummary(StorageService storage) {
+  final names = <String>[];
+  if (storage.isServiceEnabled(StorageService.serviceYoutube)) names.add('YouTube');
+  if (storage.isServiceEnabled(StorageService.serviceShorts)) names.add('Shorts');
+  if (storage.isServiceEnabled(StorageService.serviceMusic)) names.add('Music');
+  return names.isEmpty ? 'None' : names.join(', ');
 }
 
 class ShortsScreen extends StatefulWidget {
