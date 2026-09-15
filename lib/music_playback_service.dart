@@ -19,6 +19,7 @@ class _AdlessAudioHandler extends BaseAudioHandler
   }
 
   Stream<Duration> get positionStream => _player.positionStream;
+  Stream<Duration?> get durationStream => _player.durationStream;
   Duration get duration => _player.duration ?? Duration.zero;
 
   Future<void> load(MediaItem item, Uri source) async {
@@ -53,7 +54,9 @@ class _AdlessAudioHandler extends BaseAudioHandler
 
   @override
   Future<void> customAction(String name, [Map<String, dynamic>? extras]) async {
-    if (name == 'favorite') customEvent.add({'type': 'favorite'});
+    if (name == 'favorite') {
+      customEvent.add({'type': 'favorite'});
+    }
   }
 
   void _broadcastState() {
@@ -164,6 +167,8 @@ class MusicPlaybackService extends ChangeNotifier {
   String? get error => _error;
   Stream<Duration> get positionStream =>
       _handler?.positionStream ?? Stream.value(Duration.zero);
+  Stream<Duration?> get durationStream =>
+      _handler?.durationStream ?? Stream.value(null);
   Duration get duration => _handler?.duration ?? Duration.zero;
   bool get canGoNext => _queueIndex >= 0 && _queueIndex < _queue.length - 1;
   bool get canGoPrevious => _queueIndex > 0;
@@ -191,16 +196,17 @@ class MusicPlaybackService extends ChangeNotifier {
     if (queue != null) setQueue(queue, nextSong);
     _loading = true;
     _error = null;
+    // Set song early so UI can show title/thumbnail while stream loads.
+    _song = nextSong;
     notifyListeners();
     try {
       final handler = await _getHandler();
-      if (_song?.id == nextSong.id) {
+      if (_song?.id == nextSong.id && handler.mediaItem.value?.id == nextSong.id) {
         await handler.play();
         return;
       }
       final audio = await _service.getBestAudioStream(nextSong.url);
       if (audio == null) throw Exception('No audio stream found for this song.');
-      _song = nextSong;
       await handler.load(
         MediaItem(
           id: nextSong.id,
@@ -242,7 +248,8 @@ class MusicPlaybackService extends ChangeNotifier {
     if (current == null) return;
     try {
       final related = await _service.getRelatedVideos(current.url);
-      final songs = related.where((song) => !song.isLive && !song.isShort).toList();
+      final songs =
+          related.where((song) => !song.isLive && !song.isShort).toList();
       if (songs.isEmpty) return;
       _queue = songs;
       _queueIndex = 0;
