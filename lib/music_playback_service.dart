@@ -445,6 +445,34 @@ class MusicPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
+  /// Hands the now playing audio back to the video player — the second
+  /// half of the audio-only toggle. Pins the source video's resume spot
+  /// at the audio's exact live position (the periodic sync checkpoint
+  /// can be up to 3s stale) and stops the music pipeline, so the video
+  /// player reopens and continues from the now playing timestamp.
+  Future<void> switchBackToVideo() async {
+    final handler = _handler;
+    final id = _syncVideoId ?? _song?.id;
+    // Pin the live spot first — stop()'s final sync save would
+    // otherwise land on the last periodic checkpoint.
+    if (handler != null && id != null) {
+      final pos = handler.position;
+      final dur = handler.duration;
+      if (pos.inMilliseconds > 0 && dur.inMilliseconds > 0) {
+        _lastSyncedPosition = pos;
+        _lastSyncedDuration = dur;
+        await _storage.savePlaybackState(
+          videoId: id,
+          position: pos,
+          duration: dur,
+          quality: _syncQuality,
+          format: _syncFormat,
+        );
+      }
+    }
+    await stop();
+  }
+
   // ─────────── Video handoff: resume-spot sync ───────────
 
   /// While a handed-off video plays as audio, checkpoint its resume

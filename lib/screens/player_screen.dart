@@ -123,7 +123,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   /// spot.
   Future<void> _startAudioOnly() async {
     if (_switchingToAudio) return;
-    _switchingToAudio = true;
+    // Instant feedback: the pill lights up and swaps to a spinner while
+    // the background handoff runs.
+    setState(() => _switchingToAudio = true);
     try {
       final started = await _vps.switchToAudioOnly();
       if (!mounted) return;
@@ -146,7 +148,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         ),
       );
     } finally {
-      _switchingToAudio = false;
+      if (mounted) setState(() => _switchingToAudio = false);
     }
   }
 
@@ -933,6 +935,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 _actionPill(
                   icon: Icons.headphones_outlined,
                   label: 'Audio only',
+                  highlight: _switchingToAudio,
+                  loading: _switchingToAudio,
                   onTap: _startAudioOnly,
                 ),
               if (Platform.isAndroid)
@@ -1079,6 +1083,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     required String label,
     required VoidCallback onTap,
     bool highlight = false,
+    bool loading = false,
   }) {
     final theme = Theme.of(context);
     final accent = theme.colorScheme.primary;
@@ -1091,13 +1096,31 @@ class _PlayerScreenState extends State<PlayerScreen> {
         borderRadius: BorderRadius.circular(20),
         child: InkWell(
           borderRadius: BorderRadius.circular(20),
-          onTap: onTap,
+          // Explicit press + hover tint so every pill answers touches
+          // and mouse-overs visibly, on top of the default ripple.
+          overlayColor: WidgetStateProperty.resolveWith<Color?>(
+            (states) => states.contains(WidgetState.pressed)
+                ? accent.withValues(alpha: 0.20)
+                : states.contains(WidgetState.hovered)
+                    ? accent.withValues(alpha: 0.12)
+                    : null,
+          ),
+          onTap: loading ? null : onTap,
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
             child: Row(
               children: [
-                Icon(icon,
-                    size: 20, color: highlight ? accent : theme.colorScheme.onSurface),
+                if (loading)
+                  const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2.4),
+                  )
+                else
+                  Icon(icon,
+                      size: 20,
+                      color:
+                          highlight ? accent : theme.colorScheme.onSurface),
                 const SizedBox(width: 6),
                 Text(
                   label,

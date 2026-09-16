@@ -8,6 +8,7 @@ import '../models.dart';
 import '../music_playback_service.dart';
 import '../storage_service.dart';
 import '../widgets.dart';
+import 'player_screen.dart';
 
 /// ═══════════════════════ NOW PLAYING ═══════════════════════
 class MusicPlayerScreen extends StatefulWidget {
@@ -27,6 +28,7 @@ class MusicPlayerScreen extends StatefulWidget {
 class _MusicPlayerScreenState extends State<MusicPlayerScreen> {
   late final StorageService _storage;
   bool _leaving = false;
+  bool _switchingToVideo = false;
 
   @override
   void initState() {
@@ -34,6 +36,43 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen> {
     _storage = context.read<StorageService>();
     if (widget.autoPlay) {
       unawaited(context.read<MusicPlaybackService>().play(widget.song));
+    }
+  }
+
+  /// Second half of the audio-only toggle: hand the now playing audio
+  /// back to the video player. The video reopens and resumes from the
+  /// audio's exact position — a completed local video download plays
+  /// instead of the network stream when one exists.
+  Future<void> _switchBackToVideo() async {
+    if (_switchingToVideo) return;
+    final music = context.read<MusicPlaybackService>();
+    final song = music.song ?? widget.song;
+    setState(() => _switchingToVideo = true);
+    try {
+      // A completed local video copy plays offline — a muxed
+      // (video+audio) download is preferred when several exist.
+      DownloadItem? download;
+      for (final item in context.read<DownloadService>().getAll()) {
+        if (item.videoId == song.id &&
+            item.isCompleted &&
+            item.videoPath != null) {
+          download = item;
+          if (item.type == DownloadType.videoAudio) break;
+        }
+      }
+      // Pins the video's resume spot at the audio's live position,
+      // then stops the music (notification controls included).
+      await music.switchBackToVideo();
+      if (!mounted) return;
+      Navigator.pushReplacement(
+        context,
+        pushPlayerRoute(
+          PlayerScreen(video: song, download: download),
+          animationsEnabled: _storage.animationsEnabled,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _switchingToVideo = false);
     }
   }
 
@@ -282,6 +321,15 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen> {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                         children: [
+                          // Back to video mode — the second tap of the
+                          // audio-only toggle: the video resumes from
+                          // the now playing timestamp.
+                          _actionIcon(
+                            icon: Icons.ondemand_video_outlined,
+                            label: 'Video',
+                            loading: _switchingToVideo,
+                            onTap: _switchBackToVideo,
+                          ),
                           _actionIcon(
                             icon: liked
                                 ? Icons.favorite
@@ -329,13 +377,20 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen> {
     required String label,
     required VoidCallback onTap,
     Color? color,
+    bool loading = false,
   }) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         IconButton(
-          onPressed: onTap,
-          icon: Icon(icon, size: 24),
+          onPressed: loading ? null : onTap,
+          icon: loading
+              ? const SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: CircularProgressIndicator(strokeWidth: 2.6),
+                )
+              : Icon(icon, size: 24),
           color: color,
           tooltip: label,
         ),
