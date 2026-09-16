@@ -40,6 +40,11 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
   /// overridden by hand) — used to verify that a resume actually stuck.
   Duration? _rawPosition;
 
+  /// Bumped on every open, quality swap, close, dispose and manual seek.
+  /// A resume-correction loop from an older generation stands down as
+  /// soon as its number is outdated — it never fights a newer action.
+  int _resumeGeneration = 0;
+
   VideoItem? currentVideo;
   DownloadItem? currentDownload;
   List<VideoStreamInfo> streams = [];
@@ -95,9 +100,12 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
       _rawPosition = pos;
       // Watch-percentage tracking for the recommendation profile —
       // keeps the session's high-water mark and checkpoints the event
-      // to disk every 5 seconds alongside the playback state.
+      // to disk every 3 seconds alongside the playback state.
       _profile.updateWatchSession(pos, duration);
-      if ((pos - _lastSavedPosition).inSeconds >= 5) {
+      // abs(): a backward seek must save too — without it the resume
+      // spot would stay at the old high position until playback passed
+      // it again.
+      if ((pos - _lastSavedPosition).abs().inSeconds >= 3) {
         _savePlaybackState(pos);
         unawaited(_profile.checkpointWatchSession());
       }
@@ -150,19 +158,20 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
         if (videoPath == null || !File(videoPath).existsSync()) {
           throw StateError('The downloaded file is missing.');
         }
+        _rawPosition = null;
         await _player!.open(Media(videoPath));
         final audioPath = download.audioPath;
         if (audioPath != null && File(audioPath).existsSync()) {
           await _player!
               .setAudioTrack(AudioTrack.uri(Uri.file(audioPath).toString()));
         }
-        // Downloaded files resume too: seek to the last watched spot
-        // before playback starts.
+        // Downloaded files resume too: the correction loop seeks to the
+        // last watched spot once the file is actually live (see
+        // _resumeAt).
         final resumeAt = _resumePosition(_storage.getPlaybackState(video.id));
         if (resumeAt > Duration.zero) {
           position = resumeAt;
-          await _player!.seek(resumeAt);
-          unawaited(_verifyResume(resumeAt));
+          _resumePlayback(resumeAt);
         }
         await _player!.play();
       } else {
@@ -177,7 +186,10 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
         final saved = _storage.getPlaybackState(video.id);
         final savedQuality = saved?['quality'];
         final savedFormat = saved?['format'];
-        final savedPosition = _resumePosition(saved);
+        // Live streams keep no resume spot — their timeline is not the
+        // recording's.
+        final savedPosition =
+            video.isLive ? Duration.zero : _resumePosition(saved);
         streams = available;
         currentStream = _selectDefaultStream(
             available, _storage.defaultQuality);
@@ -225,6 +237,7 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
 
   /// Stops playback and clears everything (mini player close button).
   Future<void> close() async {
+    _resumeGeneration++;
     await _profile.endWatchSession();
     _savePlaybackState();
     await _player?.stop();
@@ -251,6 +264,9 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
   void toggleAudioOnlyMode() {
     if (currentVideo == null) return;
     audioOnlyMode = !audioOnlyMode;
+    // Entering listening mode is a natural checkpoint — the user is
+    // likely to background or close the app from here, so pin the spot.
+    if (audioOnlyMode) _savePlaybackState();
     notifyListeners();
   }
 
@@ -275,8 +291,12 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> seekTo(Duration target) async {
     if (currentVideo == null) return;
+    // A manual seek takes priority — any pending resume correction
+    // stands down so it cannot drag the position back.
+    _resumeGeneration++;
     await _player?.seek(target);
     position = target;
+    _savePlaybackState(target);
     notifyListeners();
   }
 
@@ -360,16 +380,9 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
         start != null && start.inMilliseconds > 1500 ? start : null;
     _rawPosition = null;
     await _player?.open(Media(stream.url, start: startAt));
-    if (startAt != null) {
-      position = startAt;
-      // Some stream types (adaptive video-only URLs in particular)
-      // silently ignore the load-time start hint — an explicit seek
-      // right after the open makes the resume deterministic.
-      await _player?.seek(startAt);
-      unawaited(_verifyResume(startAt));
-    }
     // The picked audio language wins; adaptive streams fall back to the
-    // extractor-paired original audio.
+    // extractor-paired original audio. Applied before the resume loop
+    // starts, so a track swap can never wipe out the restored position.
     final audioUrl = currentAudioTrack?.url ?? stream.audioUrl;
     if (audioUrl != null) {
       await _player?.setAudioTrack(AudioTrack.uri(
@@ -377,6 +390,14 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
         title: currentAudioTrack?.label,
         language: currentAudioTrack?.locale,
       ));
+    }
+    if (startAt != null) {
+      position = startAt;
+      // Some stream types (adaptive video-only URLs in particular)
+      // silently ignore the load-time start hint — and mpv can drop a
+      // seek issued while the file is still loading. _resumeAt makes
+      // the resume deterministic instead of hoping one seek sticks.
+      _resumePlayback(startAt);
     }
   }
 
@@ -391,18 +412,63 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
     return Duration(milliseconds: posMs);
   }
 
-  /// Second chance for a resume: a moment after the swap, if the player
-  /// is still sitting at the very beginning despite a requested start,
-  /// seek once more. Covers the rare streams that drop both the start
-  /// hint and the first seek.
-  Future<void> _verifyResume(Duration target) async {
-    final videoId = currentVideo?.id;
-    await Future<void>.delayed(const Duration(milliseconds: 1300));
-    if (currentVideo?.id != videoId || _player == null) return;
-    final raw = _rawPosition ?? Duration.zero;
-    if (raw < const Duration(seconds: 3) &&
-        target >= const Duration(seconds: 3)) {
+  /// Starts the resume correction loop for [target] under a fresh
+  /// generation — any older loop stands down immediately.
+  void _resumePlayback(Duration target) {
+    final generation = ++_resumeGeneration;
+    unawaited(_resumeAt(target, generation));
+  }
+
+  /// Deterministic resume. mpv can silently drop a seek issued while
+  /// the file is still loading — which is exactly the state a freshly
+  /// started app is in (cold player, cold network, adaptive stream
+  /// URLs). One early seek plus one late check is therefore not
+  /// enough. Instead:
+  ///
+  /// 1. wait (bounded) until the stream is actually live,
+  /// 2. seek to the target,
+  /// 3. keep watching the player-reported position and re-seek
+  ///    whenever it is still sitting at the wrong spot.
+  ///
+  /// The loop stands down as soon as the position matches, the user
+  /// seeks manually, or another open / quality swap takes over.
+  Future<void> _resumeAt(Duration target, int generation) async {
+    // Phase 1 — the file is live once the player reports a duration or
+    // its first position; seeking before that is the dropped-seek
+    // window. Warm swaps (quality change) skip the wait instantly.
+    var waited = 0;
+    while (_resumeGeneration == generation &&
+        _rawPosition == null &&
+        duration <= Duration.zero &&
+        waited < 4000) {
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      waited += 150;
+    }
+    if (_resumeGeneration != generation || _player == null) return;
+    try {
       await _player!.seek(target);
+    } catch (_) {}
+    if (_resumeGeneration != generation) return;
+    position = target;
+    notifyListeners();
+    // Phase 2 — watchdog: re-seek while the player still reports a
+    // spot far before the target (start hint AND first seek both
+    // dropped on a slow-loading stream). Buffers count as "keep
+    // waiting", not as failure.
+    var elapsed = 0;
+    while (_resumeGeneration == generation && elapsed < 12000) {
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+      elapsed += 600;
+      if (_resumeGeneration != generation || _player == null) return;
+      final raw = _rawPosition;
+      // No position reports yet — still buffering; keep waiting.
+      if (raw == null) continue;
+      // At (or past) the target — the resume stuck, hands off.
+      if (raw > target - const Duration(seconds: 3)) break;
+      try {
+        await _player!.seek(target);
+      } catch (_) {}
+      if (_resumeGeneration != generation) return;
       position = target;
       notifyListeners();
     }
@@ -453,6 +519,7 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.hidden ||
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
       _savePlaybackState();
@@ -460,11 +527,16 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
       // the session continues and endWatchSession runs on the next
       // open/close.
       unawaited(_profile.checkpointWatchSession());
+      // The OS can reap the process at any moment after this — push the
+      // saved resume spot to disk before it does, so closing the app
+      // never loses it.
+      unawaited(_storage.flushPlayback());
     }
   }
 
   @override
   void dispose() {
+    _resumeGeneration++;
     unawaited(_profile.endWatchSession());
     WidgetsBinding.instance.removeObserver(this);
     _notifyThrottle?.cancel();

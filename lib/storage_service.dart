@@ -388,6 +388,10 @@ class StorageService extends ChangeNotifier {
     });
   }
 
+  /// Forces any pending playback-state write to disk — the app is about
+  /// to be killed and the resume spot must survive.
+  Future<void> flushPlayback() => Hive.box(_playbackBox).flush();
+
   // ─────────── Search history ───────────
 
   /// Saves a search query (most recent first, capped at 30 entries).

@@ -25,10 +25,10 @@ class _MusicSource {
 
 /// ═══════════════════════ MUSIC ═══════════════════════
 ///
-/// Spotify-style home: greeting header, quick-access cards and an
-/// endless song feed. The album-icon button is gone — while a song
-/// plays, a now-playing bar sits above the navbar with a vinyl disc
-/// built from the song's own artwork, spinning for as long as the
+/// Spotify-style home: greeting header and an endless song feed
+/// (search & favourites live in the header row, top right). While a
+/// song plays, a now-playing bar sits above the navbar with a vinyl
+/// disc built from the song's own artwork, spinning for as long as the
 /// song plays and swapping art the moment the song changes.
 class MusicScreen extends StatefulWidget {
   const MusicScreen({super.key});
@@ -244,7 +244,7 @@ class _MusicScreenState extends State<MusicScreen> {
     return 'Good evening';
   }
 
-  /// Greeting row + quick-access cards + the feed's section title.
+  /// Greeting row + the feed's section title.
   Widget _buildHeader(StorageService storage) {
     final theme = Theme.of(context);
     return Column(
@@ -301,33 +301,9 @@ class _MusicScreenState extends State<MusicScreen> {
             ),
           ),
         ),
-        // Quick access — Spotify's shortcut cards.
+        // Section title — search & favourites are the header-row icons.
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
-          child: Row(
-            children: [
-              Expanded(
-                child: _QuickCard(
-                  icon: Icons.favorite,
-                  color: const Color(0xFF1DB954),
-                  label: 'Favourite songs',
-                  onTap: _showFavorites,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: _QuickCard(
-                  icon: Icons.search,
-                  color: const Color(0xFF3E7EDB),
-                  label: 'Search music',
-                  onTap: _openSearch,
-                ),
-              ),
-            ],
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(20, 22, 20, 6),
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 6),
           child: Text(
             'Songs for you',
             style: theme.textTheme.titleLarge?.copyWith(
@@ -432,60 +408,6 @@ class _MusicScreenState extends State<MusicScreen> {
                       ),
                   ],
                 ),
-      ),
-    );
-  }
-}
-
-/// Spotify shortcut card: colored icon tile + bold label.
-class _QuickCard extends StatelessWidget {
-  final IconData icon;
-  final Color color;
-  final String label;
-  final VoidCallback onTap;
-
-  const _QuickCard({
-    required this.icon,
-    required this.color,
-    required this.label,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Material(
-      color: theme.colorScheme.surfaceContainerHigh,
-      borderRadius: BorderRadius.circular(8),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: SizedBox(
-          height: 58,
-          child: Row(
-            children: [
-              Container(
-                width: 58,
-                height: 58,
-                color: color,
-                child: Icon(icon, color: Colors.white, size: 26),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  label,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 13.5,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-            ],
-          ),
-        ),
       ),
     );
   }
