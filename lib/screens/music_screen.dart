@@ -532,7 +532,9 @@ class _NowPlayingBarState extends State<_NowPlayingBar>
     // itself only follows the play/pause state.
     if (widget.isPlaying == oldWidget.isPlaying) return;
     if (widget.isPlaying) {
-      _spin.repeat(from: _spin.value);
+      // repeat() resumes from the controller's current value, so the
+      // disc continues from the exact angle it stopped at.
+      _spin.repeat();
     } else {
       _spin.stop();
     }
