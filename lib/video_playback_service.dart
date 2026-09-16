@@ -36,6 +36,10 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
   Timer? _notifyThrottle;
   Duration _lastSavedPosition = Duration.zero;
 
+  /// The last position the player itself reported (stream truth, never
+  /// overridden by hand) — used to verify that a resume actually stuck.
+  Duration? _rawPosition;
+
   VideoItem? currentVideo;
   DownloadItem? currentDownload;
   List<VideoStreamInfo> streams = [];
@@ -88,6 +92,7 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
     });
     _positionSub = player.stream.position.listen((pos) {
       position = pos;
+      _rawPosition = pos;
       // Watch-percentage tracking for the recommendation profile —
       // keeps the session's high-water mark and checkpoints the event
       // to disk every 5 seconds alongside the playback state.
@@ -151,6 +156,14 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
           await _player!
               .setAudioTrack(AudioTrack.uri(Uri.file(audioPath).toString()));
         }
+        // Downloaded files resume too: seek to the last watched spot
+        // before playback starts.
+        final resumeAt = _resumePosition(_storage.getPlaybackState(video.id));
+        if (resumeAt > Duration.zero) {
+          position = resumeAt;
+          await _player!.seek(resumeAt);
+          unawaited(_verifyResume(resumeAt));
+        }
         await _player!.play();
       } else {
         // Hard timeouts: a hung extraction must surface as a retryable
@@ -164,9 +177,7 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
         final saved = _storage.getPlaybackState(video.id);
         final savedQuality = saved?['quality'];
         final savedFormat = saved?['format'];
-        final savedPosition = Duration(
-          milliseconds: (saved?['positionMs'] as int?) ?? 0,
-        );
+        final savedPosition = _resumePosition(saved);
         streams = available;
         currentStream = _selectDefaultStream(
             available, _storage.defaultQuality);
@@ -271,15 +282,26 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> changeQuality(VideoStreamInfo stream) async {
     if (currentVideo == null) return;
+    final previous = currentStream;
     final wasPlaying = isPlaying;
     final pos = position;
-    await _openStream(stream, start: pos);
+    try {
+      await _openStream(stream, start: pos);
+      currentStream = stream;
+    } catch (_) {
+      // The new quality refused to load — fall back to the previous
+      // stream at the same position instead of killing playback.
+      if (previous != null && previous != stream) {
+        try {
+          await _openStream(previous, start: pos);
+        } catch (_) {}
+      }
+    }
     if (wasPlaying) {
       await _player?.play();
     } else {
       await _player?.pause();
     }
-    currentStream = stream;
     _savePlaybackState(pos);
     notifyListeners();
   }
@@ -334,7 +356,18 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> _openStream(VideoStreamInfo stream, {Duration? start}) async {
-    await _player?.open(Media(stream.url, start: start));
+    final startAt =
+        start != null && start.inMilliseconds > 1500 ? start : null;
+    _rawPosition = null;
+    await _player?.open(Media(stream.url, start: startAt));
+    if (startAt != null) {
+      position = startAt;
+      // Some stream types (adaptive video-only URLs in particular)
+      // silently ignore the load-time start hint — an explicit seek
+      // right after the open makes the resume deterministic.
+      await _player?.seek(startAt);
+      unawaited(_verifyResume(startAt));
+    }
     // The picked audio language wins; adaptive streams fall back to the
     // extractor-paired original audio.
     final audioUrl = currentAudioTrack?.url ?? stream.audioUrl;
@@ -344,6 +377,34 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
         title: currentAudioTrack?.label,
         language: currentAudioTrack?.locale,
       ));
+    }
+  }
+
+  /// Where to resume [video]: the saved spot, unless the video was
+  /// (almost) finished last time — finished videos start over, like
+  /// the official app.
+  Duration _resumePosition(Map<String, dynamic>? saved) {
+    final posMs = (saved?['positionMs'] as int?) ?? 0;
+    final durMs = (saved?['durationMs'] as int?) ?? 0;
+    if (posMs < 1500) return Duration.zero;
+    if (durMs > 0 && posMs >= durMs * 0.97) return Duration.zero;
+    return Duration(milliseconds: posMs);
+  }
+
+  /// Second chance for a resume: a moment after the swap, if the player
+  /// is still sitting at the very beginning despite a requested start,
+  /// seek once more. Covers the rare streams that drop both the start
+  /// hint and the first seek.
+  Future<void> _verifyResume(Duration target) async {
+    final videoId = currentVideo?.id;
+    await Future<void>.delayed(const Duration(milliseconds: 1300));
+    if (currentVideo?.id != videoId || _player == null) return;
+    final raw = _rawPosition ?? Duration.zero;
+    if (raw < const Duration(seconds: 3) &&
+        target >= const Duration(seconds: 3)) {
+      await _player!.seek(target);
+      position = target;
+      notifyListeners();
     }
   }
 
@@ -372,17 +433,20 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _savePlaybackState([Duration? pos]) {
-    if (currentDownload != null) return; // local files keep no stream state
     final video = currentVideo;
-    final stream = currentStream;
-    if (video == null || stream == null) return;
+    if (video == null) return;
     final current = pos ?? position;
+    // Nothing worth storing yet — never overwrite a good resume spot
+    // with an empty one.
+    if (current.inMilliseconds <= 0) return;
     _lastSavedPosition = current;
+    final stream = currentStream;
     unawaited(_storage.savePlaybackState(
       videoId: video.id,
       position: current,
-      quality: stream.quality,
-      format: stream.format,
+      duration: duration,
+      quality: stream?.quality,
+      format: stream?.format,
     ));
   }
 

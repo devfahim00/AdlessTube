@@ -376,11 +376,13 @@ class StorageService extends ChangeNotifier {
   Future<void> savePlaybackState({
     required String videoId,
     required Duration position,
-    required String quality,
-    required String format,
+    required Duration duration,
+    String? quality,
+    String? format,
   }) {
     return Hive.box(_playbackBox).put(videoId, {
       'positionMs': position.inMilliseconds,
+      'durationMs': duration.inMilliseconds,
       'quality': quality,
       'format': format,
     });

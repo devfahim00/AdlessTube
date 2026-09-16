@@ -408,11 +408,16 @@ class YouTubeVideoTile extends StatelessWidget {
 }
 
 /// Music row with thumbnail, title, uploader and a like button.
+/// Spotify-style: big rounded artwork, bold title, and the row of the
+/// song that is currently playing highlights in green.
 class MusicListTile extends StatelessWidget {
   final VideoItem song;
   final bool liked;
   final VoidCallback onTap;
   final VoidCallback onToggleLike;
+
+  /// True when this row's song is the one playing right now.
+  final bool isPlaying;
 
   const MusicListTile({
     super.key,
@@ -420,54 +425,75 @@ class MusicListTile extends StatelessWidget {
     required this.liked,
     required this.onTap,
     required this.onToggleLike,
+    this.isPlaying = false,
   });
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    const spotifyGreen = Color(0xFF1DB954);
     return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
       leading: ClipRRect(
         borderRadius: BorderRadius.circular(8),
         child: song.thumbnailUrl.isEmpty
             ? Container(
-                width: 52,
-                height: 52,
+                width: 56,
+                height: 56,
                 color: theme.colorScheme.surfaceContainerHighest,
                 child: const Icon(Icons.music_note),
               )
             : VideoThumbnail(
                 videoId: song.id,
                 fallbackUrl: song.thumbnailUrl,
-                width: 52,
-                height: 52,
+                width: 56,
+                height: 56,
                 placeholder: Container(
-                  width: 52,
-                  height: 52,
+                  width: 56,
+                  height: 56,
                   color: theme.colorScheme.surfaceContainerHighest,
                 ),
                 errorWidget: Container(
-                  width: 52,
-                  height: 52,
+                  width: 56,
+                  height: 56,
                   color: theme.colorScheme.surfaceContainerHighest,
                   child: const Icon(Icons.music_note),
                 ),
               ),
       ),
-      title: Text(
-        song.title,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
+      title: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (isPlaying) ...[
+            const Icon(Icons.graphic_eq, size: 15, color: spotifyGreen),
+            const SizedBox(width: 5),
+          ],
+          Flexible(
+            child: Text(
+              song.title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontWeight: FontWeight.w600,
+                color: isPlaying
+                    ? spotifyGreen
+                    : theme.colorScheme.onSurface,
+              ),
+            ),
+          ),
+        ],
       ),
       subtitle: Text(
         song.uploader,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
+        style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
       ),
       trailing: IconButton(
         onPressed: onToggleLike,
         icon: Icon(
           liked ? Icons.favorite : Icons.favorite_border,
-          color: liked ? theme.colorScheme.primary : null,
+          color: liked ? spotifyGreen : null,
         ),
         tooltip: liked ? 'Remove from liked songs' : 'Like song',
       ),

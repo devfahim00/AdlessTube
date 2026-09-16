@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:newpipeextractor_dart/newpipeextractor_dart.dart'
     show PageToken;
 import 'package:provider/provider.dart';
@@ -24,8 +25,11 @@ class _MusicSource {
 
 /// ═══════════════════════ MUSIC ═══════════════════════
 ///
-/// Skeleton loading + endless feed: new songs keep loading while the
-/// user keeps scrolling.
+/// Spotify-style home: greeting header, quick-access cards and an
+/// endless song feed. The album-icon button is gone — while a song
+/// plays, a now-playing bar sits above the navbar with a vinyl disc
+/// built from the song's own artwork, spinning for as long as the
+/// song plays and swapping art the moment the song changes.
 class MusicScreen extends StatefulWidget {
   const MusicScreen({super.key});
 
@@ -158,6 +162,13 @@ class _MusicScreenState extends State<MusicScreen> {
     );
   }
 
+  void _openSearch() {
+    Navigator.push<void>(
+      context,
+      MaterialPageRoute(builder: (_) => const MusicSearchScreen()),
+    );
+  }
+
   /// Favourites queue loops within itself — no outside songs ever join in.
   Future<void> _showFavorites() async {
     final favorites = context.read<StorageService>().getLikedSongs();
@@ -172,8 +183,8 @@ class _MusicScreenState extends State<MusicScreen> {
               : Column(
                   children: [
                     ListTile(
-                      leading: Icon(Icons.favorite,
-                          color: Theme.of(context).colorScheme.primary),
+                      leading: const Icon(Icons.favorite,
+                          color: Color(0xFF1DB954)),
                       title: const Text('Favourite songs'),
                     ),
                     Expanded(
@@ -225,110 +236,456 @@ class _MusicScreenState extends State<MusicScreen> {
     unawaited(context.read<StorageService>().addToHistory(song));
   }
 
+  /// Spotify-style time-of-day greeting.
+  String _greeting() {
+    final hour = DateTime.now().hour;
+    if (hour < 12) return 'Good morning';
+    if (hour < 17) return 'Good afternoon';
+    return 'Good evening';
+  }
+
+  /// Greeting row + quick-access cards + the feed's section title.
+  Widget _buildHeader(StorageService storage) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SafeArea(
+          bottom: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 6, 6, 0),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    _greeting(),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  onPressed: _openSearch,
+                  icon: const Icon(Icons.search),
+                  tooltip: 'Search music',
+                ),
+                IconButton(
+                  onPressed: _showFavorites,
+                  icon: const Icon(Icons.favorite_outline),
+                  tooltip: 'Favourite songs',
+                ),
+                PopupMenuButton<String>(
+                  icon: const Icon(Icons.more_vert),
+                  onSelected: (value) {
+                    if (value == 'autoplay') {
+                      storage.setMusicAutoplay(!storage.musicAutoplay);
+                    } else if (value == 'refresh') {
+                      unawaited(_refresh());
+                    }
+                  },
+                  itemBuilder: (_) => [
+                    CheckedPopupMenuItem(
+                      value: 'autoplay',
+                      checked: storage.musicAutoplay,
+                      child: const Text('Autoplay related songs'),
+                    ),
+                    const PopupMenuItem(
+                      value: 'refresh',
+                      child: Text('Refresh music'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+        // Quick access — Spotify's shortcut cards.
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+          child: Row(
+            children: [
+              Expanded(
+                child: _QuickCard(
+                  icon: Icons.favorite,
+                  color: const Color(0xFF1DB954),
+                  label: 'Favourite songs',
+                  onTap: _showFavorites,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _QuickCard(
+                  icon: Icons.search,
+                  color: const Color(0xFF3E7EDB),
+                  label: 'Search music',
+                  onTap: _openSearch,
+                ),
+              ),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 22, 20, 6),
+          child: Text(
+            'Songs for you',
+            style: theme.textTheme.titleLarge?.copyWith(
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final storage = context.watch<StorageService>();
     final music = context.watch<MusicPlaybackService>();
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Music'),
-        actions: [
-          IconButton(
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const MusicSearchScreen()),
-            ),
-            icon: const Icon(Icons.search),
-            tooltip: 'Search music',
-          ),
-          IconButton(
-            onPressed: _showFavorites,
-            icon: const Icon(Icons.favorite_outline),
-            tooltip: 'Favourite songs',
-          ),
-          IconButton(
-            onPressed: _refresh,
-            icon: const Icon(Icons.refresh),
-            tooltip: 'Refresh music',
-          ),
-          PopupMenuButton<bool>(
-            icon: const Icon(Icons.more_vert),
-            onSelected: storage.setMusicAutoplay,
-            itemBuilder: (_) => [
-              CheckedPopupMenuItem(
-                value: !storage.musicAutoplay,
-                checked: storage.musicAutoplay,
-                child: const Text('Autoplay related songs'),
+    final playingSong = music.song;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    // No AppBar here — set the status-bar icon color to match the theme
+    // the way an AppBar would.
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: isDark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark,
+      child: Scaffold(
+      body: _loading
+          ? const SafeArea(child: MusicListSkeleton())
+          : _error != null
+              ? SafeArea(child: ErrorView(message: _error!, onRetry: _refresh))
+              : Stack(
+                  children: [
+                    RefreshIndicator(
+                      onRefresh: _refresh,
+                      child: NotificationListener<ScrollNotification>(
+                        onNotification: (notification) {
+                          if (notification.metrics.extentAfter < 600) {
+                            unawaited(_loadMore());
+                          }
+                          return false;
+                        },
+                        child: ListView.builder(
+                          padding: EdgeInsets.only(
+                            bottom: playingSong != null ? 176 : 96,
+                          ),
+                          itemCount: _songs.length + 2,
+                          itemBuilder: (context, index) {
+                            // Header block: greeting, cards, section title.
+                            if (index == 0) return _buildHeader(storage);
+                            // Footer: more songs loading / end of feed.
+                            if (index == _songs.length + 1) {
+                              if (_hasAvailableSources || _loadingMore) {
+                                return const Padding(
+                                  padding: EdgeInsets.all(20),
+                                  child: Center(
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2),
+                                  ),
+                                );
+                              }
+                              return const Padding(
+                                padding: EdgeInsets.all(24),
+                                child: Center(
+                                  child: Text(
+                                    'No more songs',
+                                    style: TextStyle(color: Colors.grey),
+                                  ),
+                                ),
+                              );
+                            }
+                            final song = _songs[index - 1];
+                            final liked = storage.isSongLiked(song.id);
+                            return MusicListTile(
+                              song: song,
+                              liked: liked,
+                              isPlaying: playingSong?.id == song.id,
+                              onTap: () => _openSong(song, _songs),
+                              onToggleLike: () =>
+                                  storage.toggleLikedSong(song),
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                    // Now-playing bar: a vinyl disc of the current song's
+                    // artwork spins above the navbar while music plays.
+                    if (playingSong != null)
+                      Align(
+                        alignment: Alignment.bottomCenter,
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(10, 0, 10, 78),
+                          child: _NowPlayingBar(
+                            song: playingSong,
+                            isPlaying: music.isPlaying,
+                            onTap: () => Navigator.push<void>(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) =>
+                                    MusicPlayerScreen(song: playingSong),
+                              ),
+                            ),
+                            onTogglePlay: () => music.playOrPause(),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+      ),
+    );
+  }
+}
+
+/// Spotify shortcut card: colored icon tile + bold label.
+class _QuickCard extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+  final String label;
+  final VoidCallback onTap;
+
+  const _QuickCard({
+    required this.icon,
+    required this.color,
+    required this.label,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Material(
+      color: theme.colorScheme.surfaceContainerHigh,
+      borderRadius: BorderRadius.circular(8),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: SizedBox(
+          height: 58,
+          child: Row(
+            children: [
+              Container(
+                width: 58,
+                height: 58,
+                color: color,
+                child: Icon(icon, color: Colors.white, size: 26),
               ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  label,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13.5,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Spotify-style now-playing bar. Instead of a plain album icon, the
+/// current song's thumbnail becomes a vinyl disc that rotates 360°
+/// endlessly for as long as the song plays, holds its angle on pause
+/// and swaps its artwork the moment the song changes.
+class _NowPlayingBar extends StatefulWidget {
+  final VideoItem song;
+  final bool isPlaying;
+  final VoidCallback onTap;
+  final VoidCallback onTogglePlay;
+
+  const _NowPlayingBar({
+    required this.song,
+    required this.isPlaying,
+    required this.onTap,
+    required this.onTogglePlay,
+  });
+
+  @override
+  State<_NowPlayingBar> createState() => _NowPlayingBarState();
+}
+
+class _NowPlayingBarState extends State<_NowPlayingBar>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _spin = AnimationController(
+    vsync: this,
+    duration: const Duration(seconds: 14),
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.isPlaying) _spin.repeat();
+  }
+
+  @override
+  void didUpdateWidget(covariant _NowPlayingBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // A song change rebuilds the bar with new artwork — the rotation
+    // itself only follows the play/pause state.
+    if (widget.isPlaying == oldWidget.isPlaying) return;
+    if (widget.isPlaying) {
+      _spin.repeat(from: _spin.value);
+    } else {
+      _spin.stop();
+    }
+  }
+
+  @override
+  void dispose() {
+    _spin.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final barColor = isDark
+        ? const Color(0xFF2A2A2A)
+        : theme.colorScheme.surfaceContainerHighest;
+    return Material(
+      color: barColor,
+      borderRadius: BorderRadius.circular(10),
+      clipBehavior: Clip.antiAlias,
+      elevation: isDark ? 0 : 3,
+      shadowColor: Colors.black26,
+      child: InkWell(
+        onTap: widget.onTap,
+        child: SizedBox(
+          height: 60,
+          child: Row(
+            children: [
+              const SizedBox(width: 8),
+              RotationTransition(
+                turns: _spin,
+                child: _VinylDisc(
+                  videoId: widget.song.id,
+                  fallbackUrl: widget.song.thumbnailUrl,
+                  size: 44,
+                  holeColor: barColor,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.song.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 14,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      widget.song.uploader,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: theme.colorScheme.onSurfaceVariant,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                onPressed: widget.onTogglePlay,
+                icon: Icon(
+                  widget.isPlaying ? Icons.pause : Icons.play_arrow,
+                  size: 28,
+                ),
+                tooltip: widget.isPlaying ? 'Pause' : 'Play',
+              ),
+              const SizedBox(width: 4),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A spinning record: black vinyl base, the song's artwork as the
+/// label and a small center hole.
+class _VinylDisc extends StatelessWidget {
+  final String videoId;
+  final String fallbackUrl;
+  final double size;
+  final Color holeColor;
+
+  const _VinylDisc({
+    required this.videoId,
+    required this.fallbackUrl,
+    required this.size,
+    required this.holeColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final artSize = size - 3;
+    final Widget art;
+    if (videoId.isEmpty && fallbackUrl.isEmpty) {
+      art = Container(
+        width: artSize,
+        height: artSize,
+        color: theme.colorScheme.surfaceContainerHighest,
+        child: Icon(Icons.music_note, size: artSize * 0.45),
+      );
+    } else {
+      art = VideoThumbnail(
+        videoId: videoId,
+        fallbackUrl: fallbackUrl,
+        width: artSize,
+        height: artSize,
+        placeholder: Container(
+          width: artSize,
+          height: artSize,
+          color: theme.colorScheme.surfaceContainerHighest,
+        ),
+        errorWidget: Container(
+          width: artSize,
+          height: artSize,
+          color: theme.colorScheme.surfaceContainerHighest,
+          child: Icon(Icons.music_note, size: artSize * 0.45),
+        ),
+      );
+    }
+    return Container(
+      width: size,
+      height: size,
+      decoration: const BoxDecoration(
+        shape: BoxShape.circle,
+        color: Colors.black87,
+      ),
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          ClipOval(child: art),
+          Container(
+            width: size * 0.15,
+            height: size * 0.15,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: holeColor,
+              border: Border.all(color: Colors.black54, width: 0.8),
+            ),
           ),
         ],
       ),
-      body: _loading
-          ? const MusicListSkeleton()
-          : _error != null
-              ? ErrorView(message: _error!, onRetry: _refresh)
-              : RefreshIndicator(
-                  onRefresh: _refresh,
-                  child: NotificationListener<ScrollNotification>(
-                    onNotification: (notification) {
-                      if (notification.metrics.extentAfter < 600) {
-                        unawaited(_loadMore());
-                      }
-                      return false;
-                    },
-                    child: ListView.builder(
-                      padding: const EdgeInsets.only(bottom: 96),
-                      itemCount: _songs.length + 1,
-                      itemBuilder: (context, index) {
-                        if (index == _songs.length) {
-                          if (_hasAvailableSources || _loadingMore) {
-                            return const Padding(
-                              padding: EdgeInsets.all(20),
-                              child: Center(
-                                child: CircularProgressIndicator(
-                                    strokeWidth: 2),
-                              ),
-                            );
-                          }
-                          return const Padding(
-                            padding: EdgeInsets.all(24),
-                            child: Center(
-                              child: Text(
-                                'No more songs',
-                                style: TextStyle(color: Colors.grey),
-                              ),
-                            ),
-                          );
-                        }
-                        final song = _songs[index];
-                        final liked = storage.isSongLiked(song.id);
-                        return MusicListTile(
-                          song: song,
-                          liked: liked,
-                          onTap: () => _openSong(song, _songs),
-                          onToggleLike: () =>
-                              storage.toggleLikedSong(song),
-                        );
-                      },
-                    ),
-                  ),
-                ),
-      floatingActionButton: music.isPlaying && music.song != null
-          ? Padding(
-              padding: const EdgeInsets.only(bottom: 72),
-              child: FloatingActionButton.small(
-                tooltip: 'Open now playing',
-                child: const Icon(Icons.album),
-                onPressed: () => Navigator.push<void>(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => MusicPlayerScreen(song: music.song!),
-                  ),
-                ),
-              ),
-            )
-          : null,
     );
   }
 }

@@ -233,78 +233,83 @@ class _PlayerScreenState extends State<PlayerScreen> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
+      // The sheet listens to the playback service so speed/quality taps
+      // show their selected state immediately — no reopen needed.
       builder: (sheetContext) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 6),
-              child: Text(
-                'Playback speed',
-                style: TextStyle(
-                  color: isDark ? Colors.white : null,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 15,
-                ),
-              ),
-            ),
-            SizedBox(
-              height: 48,
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                children: [
-                  for (final speed in _speeds)
-                    _speedChip(speed, isDark),
-                ],
-              ),
-            ),
-            const Divider(height: 24),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 6),
-              child: Text(
-                'Quality',
-                style: TextStyle(
-                  color: isDark ? Colors.white : null,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 15,
-                ),
-              ),
-            ),
-            if (widget.download != null)
-              ListTile(
-                dense: true,
-                leading: Icon(Icons.download_done,
-                    color: Theme.of(context).colorScheme.primary),
-                title: Text(
-                  'Playing downloaded file (${widget.download!.quality})',
-                  style: TextStyle(color: isDark ? Colors.white : null),
-                ),
-              )
-            else if (_vps.streams.isEmpty)
+        child: ListenableBuilder(
+          listenable: _vps,
+          builder: (context, _) => Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
               Padding(
-                padding: const EdgeInsets.all(20),
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 6),
                 child: Text(
-                  'No other qualities available right now.',
-                  style: TextStyle(color: Colors.grey[500]),
+                  'Playback speed',
+                  style: TextStyle(
+                    color: isDark ? Colors.white : null,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 15,
+                  ),
                 ),
-              )
-            else
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxHeight: 300),
+              ),
+              SizedBox(
+                height: 48,
                 child: ListView(
-                  shrinkWrap: true,
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
                   children: [
-                    for (final stream in _vps.streams)
-                      _qualityRow(stream, isDark, sheetContext),
+                    for (final speed in _speeds)
+                      _speedChip(speed, isDark),
                   ],
                 ),
               ),
-            // Dubbed audio languages live in their own dedicated sheet
-            // reachable from the audio pill in the action row.
-            const SizedBox(height: 8),
-          ],
+              const Divider(height: 24),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 6),
+                child: Text(
+                  'Quality',
+                  style: TextStyle(
+                    color: isDark ? Colors.white : null,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 15,
+                  ),
+                ),
+              ),
+              if (widget.download != null)
+                ListTile(
+                  dense: true,
+                  leading: Icon(Icons.download_done,
+                      color: Theme.of(context).colorScheme.primary),
+                  title: Text(
+                    'Playing downloaded file (${widget.download!.quality})',
+                    style: TextStyle(color: isDark ? Colors.white : null),
+                  ),
+                )
+              else if (_vps.streams.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Text(
+                    'No other qualities available right now.',
+                    style: TextStyle(color: Colors.grey[500]),
+                  ),
+                )
+              else
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 300),
+                  child: ListView(
+                    shrinkWrap: true,
+                    children: [
+                      for (final stream in _vps.streams)
+                        _qualityRow(stream, isDark, sheetContext),
+                    ],
+                  ),
+                ),
+              // Dubbed audio languages live in their own dedicated sheet
+              // reachable from the audio pill in the action row.
+              const SizedBox(height: 8),
+            ],
+          ),
         ),
       ),
     );
@@ -339,23 +344,37 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final selected = _vps.playbackSpeed == speed;
     return Padding(
       padding: const EdgeInsets.only(right: 8),
-      child: GestureDetector(
-        onTap: () => _vps.changeSpeed(speed),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-          decoration: BoxDecoration(
-            color: selected
-                ? theme.colorScheme.primary
-                : theme.colorScheme.surfaceContainerHigh,
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Text(
-            '${speed}x',
-            style: TextStyle(
-              color: selected
-                  ? Colors.white
-                  : theme.colorScheme.onSurface,
-              fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+      child: Material(
+        color: selected
+            ? theme.colorScheme.primary
+            : theme.colorScheme.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(20),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: () => _vps.changeSpeed(speed),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (selected) ...[
+                  Icon(
+                    Icons.check,
+                    size: 15,
+                    color: theme.colorScheme.onPrimary,
+                  ),
+                  const SizedBox(width: 5),
+                ],
+                Text(
+                  '${speed}x',
+                  style: TextStyle(
+                    color: selected
+                        ? theme.colorScheme.onPrimary
+                        : theme.colorScheme.onSurface,
+                    fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+                  ),
+                ),
+              ],
             ),
           ),
         ),
