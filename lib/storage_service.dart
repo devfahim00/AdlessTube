@@ -15,6 +15,9 @@ class StorageService extends ChangeNotifier {
   static const _regionKey = 'region_code';
   static const _regionSelectedKey = 'region_selected';
   static const _themeModeKey = 'theme_mode';
+  static const _themeOptionKey = 'theme_option';
+  static const _accentColorKey = 'accent_color';
+  static const _videoFitKey = 'video_fit';
   static const _defaultQualityKey = 'default_quality';
   static const _musicAutoplayKey = 'music_autoplay';
   static const _preferredAudioLocaleKey = 'preferred_audio_locale';
@@ -42,6 +45,12 @@ class StorageService extends ChangeNotifier {
   static const serviceYoutube = 'youtube';
   static const serviceShorts = 'shorts';
   static const serviceMusic = 'music';
+
+  /// Valid [themeOption] values.
+  static const themeOptions = ['auto', 'light', 'dark', 'black'];
+
+  /// Valid [videoFitMode] values.
+  static const videoFitModes = ['fit', 'crop', 'stretch'];
 
   Future<void> init() async {
     await Hive.initFlutter();
@@ -160,23 +169,64 @@ class StorageService extends ChangeNotifier {
     notifyListeners();
   }
 
-  ThemeMode get themeMode {
-    final value =
-        Hive.box(_settingsBox).get(_themeModeKey, defaultValue: 'auto');
-    return switch (value) {
-      'light' => ThemeMode.light,
-      'dark' => ThemeMode.dark,
-      _ => ThemeMode.system,
+  // ─────────── Theme ───────────
+
+  /// The selected appearance: 'auto' | 'light' | 'dark' | 'black'
+  /// ('black' = pitch-black AMOLED theme).
+  ///
+  /// Reads migrate from the legacy `theme_mode` key so existing users
+  /// keep their choice after the update.
+  String get themeOption {
+    final stored = Hive.box(_settingsBox).get(_themeOptionKey);
+    if (stored is String && themeOptions.contains(stored)) return stored;
+    final legacy = Hive.box(_settingsBox).get(_themeModeKey);
+    return switch (legacy) {
+      'light' => 'light',
+      'dark' => 'dark',
+      _ => 'auto',
     };
   }
 
-  Future<void> setThemeMode(ThemeMode mode) async {
-    final value = switch (mode) {
-      ThemeMode.light => 'light',
-      ThemeMode.dark => 'dark',
-      ThemeMode.system => 'auto',
-    };
-    await Hive.box(_settingsBox).put(_themeModeKey, value);
+  Future<void> setThemeOption(String option) async {
+    final safe = themeOptions.contains(option) ? option : 'auto';
+    await Hive.box(_settingsBox).put(_themeOptionKey, safe);
+    notifyListeners();
+  }
+
+  /// [ThemeMode] for [MaterialApp]: the pitch-black theme is a dark theme
+  /// with black surfaces, so it maps to [ThemeMode.dark].
+  ThemeMode get themeMode => switch (themeOption) {
+        'light' => ThemeMode.light,
+        'dark' || 'black' => ThemeMode.dark,
+        _ => ThemeMode.system,
+      };
+
+  /// Whether the pitch-black (AMOLED) theme is active.
+  bool get isPitchBlack => themeOption == 'black';
+
+  /// Accent color (ARGB) used to seed the app theme. Defaults to the
+  /// classic AdlessTube red.
+  int get accentColor => Hive.box(_settingsBox)
+      .get(_accentColorKey, defaultValue: 0xFFF44336) as int;
+
+  Future<void> setAccentColor(int argb) async {
+    await Hive.box(_settingsBox).put(_accentColorKey, argb);
+    notifyListeners();
+  }
+
+  // ─────────── Video fit (fullscreen) ───────────
+
+  /// How the video fills the player surface: 'fit' (whole video visible,
+  /// letterboxed), 'crop' (zoom to fill, edges cropped) or 'stretch'
+  /// (distorted to fill).
+  String get videoFitMode {
+    final stored = Hive.box(_settingsBox).get(_videoFitKey);
+    return stored is String && videoFitModes.contains(stored) ? stored : 'fit';
+  }
+
+  Future<void> setVideoFitMode(String mode) async {
+    final safe = videoFitModes.contains(mode) ? mode : 'fit';
+    await Hive.box(_settingsBox).put(_videoFitKey, safe);
     notifyListeners();
   }
 

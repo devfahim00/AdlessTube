@@ -101,7 +101,9 @@ class _DownloadsListState extends State<DownloadsList> {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
           decoration: BoxDecoration(
-            color: selected ? Colors.red : theme.colorScheme.surfaceContainerHighest,
+            color: selected
+                ? theme.colorScheme.primary
+                : theme.colorScheme.surfaceContainerHighest,
             borderRadius: BorderRadius.circular(18),
           ),
           child: Text(
@@ -128,7 +130,8 @@ class _DownloadTile extends StatelessWidget {
     final subtitle = item.isDownloading
         ? null
         : item.isFailed
-            ? const Text('Download failed', style: TextStyle(color: Colors.red))
+            ? Text('Download failed',
+                style: TextStyle(color: theme.colorScheme.error))
             : Text(_subtitle(item),
                 style: TextStyle(color: Colors.grey[500], fontSize: 12));
 

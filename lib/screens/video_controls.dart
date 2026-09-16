@@ -12,8 +12,9 @@ import 'package:media_kit/media_kit.dart';
 /// * Swiping down minimizes the video into the mini player (or exits
 ///   fullscreen when already fullscreen) — like the official app, there
 ///   is no back button on the video.
-/// * Top bar: gear (settings) on the upper-right corner.
-/// * Bottom bar: thin red progress bar, elapsed/total time and a
+/// * Top bar: video-fit button (fullscreen only) + gear (settings) on
+///   the upper-right corner.
+/// * Bottom bar: thin accent progress bar, elapsed/total time and a
 ///   fullscreen toggle.
 class YouTubeVideoControls extends StatefulWidget {
   final Player player;
@@ -27,6 +28,13 @@ class YouTubeVideoControls extends StatefulWidget {
   /// Whether UI animations are enabled (settings toggle).
   final bool animationsEnabled;
 
+  /// How the video fills the player surface right now
+  /// ('fit' | 'crop' | 'stretch').
+  final String fitMode;
+
+  /// Cycles the fit mode; shown as a button in fullscreen only.
+  final VoidCallback? onCycleFit;
+
   const YouTubeVideoControls({
     super.key,
     required this.player,
@@ -35,6 +43,8 @@ class YouTubeVideoControls extends StatefulWidget {
     required this.onOpenSettings,
     required this.onSwipeDown,
     this.animationsEnabled = true,
+    this.fitMode = 'fit',
+    this.onCycleFit,
   });
 
   @override
@@ -52,6 +62,8 @@ class _YouTubeVideoControlsState extends State<YouTubeVideoControls> {
   Timer? _seekFeedbackTimer;
   double _dragValue = -1; // -1 = not dragging
   double _verticalDrag = 0; // accumulated downward drag, 0 = none
+  String? _fitBadge; // label shown right after the fit mode changes
+  Timer? _fitBadgeTimer;
 
   @override
   void initState() {
@@ -63,7 +75,36 @@ class _YouTubeVideoControlsState extends State<YouTubeVideoControls> {
   void dispose() {
     _hideTimer?.cancel();
     _seekFeedbackTimer?.cancel();
+    _fitBadgeTimer?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(covariant YouTubeVideoControls oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.fitMode != oldWidget.fitMode) {
+      _showFitBadge();
+    }
+  }
+
+  static String _fitLabel(String mode) => switch (mode) {
+        'crop' => 'Crop to fill',
+        'stretch' => 'Stretch to fill',
+        _ => 'Fit to screen',
+      };
+
+  static IconData _fitIcon(String mode) => switch (mode) {
+        'crop' => Icons.crop,
+        'stretch' => Icons.open_in_full,
+        _ => Icons.fit_screen,
+      };
+
+  void _showFitBadge() {
+    _fitBadgeTimer?.cancel();
+    setState(() => _fitBadge = _fitLabel(widget.fitMode));
+    _fitBadgeTimer = Timer(const Duration(milliseconds: 1000), () {
+      if (mounted) setState(() => _fitBadge = null);
+    });
   }
 
   void _scheduleHide() {
@@ -250,6 +291,33 @@ class _YouTubeVideoControlsState extends State<YouTubeVideoControls> {
               );
             },
           ),
+          // Fit-mode badge: briefly confirms the new scaling mode.
+          if (_fitBadge != null)
+            IgnorePointer(
+              child: Align(
+                alignment: Alignment.topCenter,
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 56),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 8,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.65),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      _fitBadge!,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
           // Controls overlay.
           AnimatedOpacity(
             opacity: _visible ? 1.0 : 0.0,
@@ -275,6 +343,21 @@ class _YouTubeVideoControlsState extends State<YouTubeVideoControls> {
                       child: Row(
                         children: [
                           const Spacer(),
+                          // Video fit — how the video fills the screen
+                          // (fullscreen only, like the official player).
+                          if (widget.isFullscreen && widget.onCycleFit != null)
+                            IconButton(
+                              icon: Icon(
+                                _fitIcon(widget.fitMode),
+                                color: Colors.white,
+                              ),
+                              tooltip:
+                                  'Video fit — ${_fitLabel(widget.fitMode)}',
+                              onPressed: () {
+                                _scheduleHide();
+                                widget.onCycleFit!();
+                              },
+                            ),
                           IconButton(
                             icon: const Icon(Icons.settings, color: Colors.white),
                             tooltip: 'Settings',
@@ -302,6 +385,7 @@ class _YouTubeVideoControlsState extends State<YouTubeVideoControls> {
   }
 
   Widget _buildBottomBar(Player player) {
+    final accent = Theme.of(context).colorScheme.primary;
     return Container(
       width: double.infinity,
       decoration: const BoxDecoration(
@@ -341,10 +425,10 @@ class _YouTubeVideoControlsState extends State<YouTubeVideoControls> {
                           const RoundSliderThumbShape(enabledThumbRadius: 6),
                       overlayShape:
                           const RoundSliderOverlayShape(overlayRadius: 12),
-                      activeTrackColor: Colors.red,
+                      activeTrackColor: accent,
                       inactiveTrackColor: Colors.white24,
-                      thumbColor: Colors.red,
-                      overlayColor: Colors.red.withValues(alpha: 0.15),
+                      thumbColor: accent,
+                      overlayColor: accent.withValues(alpha: 0.15),
                     ),
                     child: Slider(
                       value: value.clamp(0.0, 1.0),

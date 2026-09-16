@@ -128,7 +128,8 @@ class _MenuScreenState extends State<MenuScreen> {
         padding: const EdgeInsets.only(bottom: 100),
         children: [
           ListTile(
-            leading: const Icon(Icons.public, color: Colors.red),
+            leading: Icon(Icons.public,
+                color: Theme.of(context).colorScheme.primary),
             title: const Text('Region'),
             subtitle: Text(
               '${RegionService.flagFor(region)} ${RegionService.nameFor(region)}',

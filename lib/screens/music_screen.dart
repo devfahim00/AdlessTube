@@ -171,9 +171,10 @@ class _MusicScreenState extends State<MusicScreen> {
               ? const Center(child: Text('No favourite songs yet'))
               : Column(
                   children: [
-                    const ListTile(
-                      leading: Icon(Icons.favorite, color: Colors.red),
-                      title: Text('Favourite songs'),
+                    ListTile(
+                      leading: Icon(Icons.favorite,
+                          color: Theme.of(context).colorScheme.primary),
+                      title: const Text('Favourite songs'),
                     ),
                     Expanded(
                       child: ListView.builder(

@@ -91,13 +91,15 @@ class _ServiceSelectScreenState extends State<ServiceSelectScreen> {
                   onChanged: (_) => _toggle(key),
                   secondary: Icon(
                     icon,
-                    color: selected ? Colors.red : Colors.grey,
+                    color: selected
+                        ? Theme.of(context).colorScheme.primary
+                        : Colors.grey,
                     size: 28,
                   ),
                   title: Text(title,
                       style: const TextStyle(fontWeight: FontWeight.w600)),
                   subtitle: Text(subtitle),
-                  activeColor: Colors.red,
+                  activeColor: Theme.of(context).colorScheme.primary,
                 );
               }).toList(),
             ),
@@ -111,7 +113,7 @@ class _ServiceSelectScreenState extends State<ServiceSelectScreen> {
                   onPressed: _selected.isEmpty ? null : _continue,
                   style: ElevatedButton.styleFrom(
                     padding: const EdgeInsets.symmetric(vertical: 16),
-                    backgroundColor: Colors.red,
+                    backgroundColor: Theme.of(context).colorScheme.primary,
                     foregroundColor: Colors.white,
                   ),
                   child: Text(

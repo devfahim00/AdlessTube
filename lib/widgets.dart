@@ -441,7 +441,7 @@ class MusicListTile extends StatelessWidget {
         onPressed: onToggleLike,
         icon: Icon(
           liked ? Icons.favorite : Icons.favorite_border,
-          color: liked ? Colors.red : null,
+          color: liked ? theme.colorScheme.primary : null,
         ),
         tooltip: liked ? 'Remove from liked songs' : 'Like song',
       ),
@@ -494,6 +494,7 @@ class SubscribeButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final storage = context.watch<StorageService>();
     final isSubscribed = storage.isSubscribed(channelUrl);
+    final accent = Theme.of(context).colorScheme.primary;
 
     return compact
         ? IconButton(
@@ -501,7 +502,7 @@ class SubscribeButton extends StatelessWidget {
               isSubscribed
                   ? Icons.notifications_active
                   : Icons.notifications_none,
-              color: isSubscribed ? Colors.red : Colors.grey,
+              color: isSubscribed ? accent : Colors.grey,
             ),
             tooltip: isSubscribed ? 'Unsubscribe' : 'Subscribe',
             onPressed: () => storage.toggleSubscribe(
@@ -522,7 +523,7 @@ class SubscribeButton extends StatelessWidget {
               label: Text(isSubscribed ? 'Subscribed' : 'Subscribe'),
               style: ElevatedButton.styleFrom(
                 backgroundColor:
-                    isSubscribed ? Colors.grey[800] : Colors.red,
+                    isSubscribed ? Colors.grey[800] : accent,
                 foregroundColor: Colors.white,
                 padding:
                     const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
@@ -549,7 +550,8 @@ class ErrorView extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.error_outline, size: 60, color: Colors.red),
+            Icon(Icons.error_outline,
+                size: 60, color: Theme.of(context).colorScheme.error),
             const SizedBox(height: 16),
             Text(message, textAlign: TextAlign.center),
             const SizedBox(height: 16),

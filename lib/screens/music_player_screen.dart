@@ -82,7 +82,8 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen> {
                 child: const Text('Keep'),
               ),
               FilledButton(
-                style: FilledButton.styleFrom(backgroundColor: Colors.red),
+                style: FilledButton.styleFrom(
+                    backgroundColor: Theme.of(context).colorScheme.primary),
                 onPressed: () => Navigator.pop(dialogContext, true),
                 child: const Text('Remove'),
               ),
@@ -279,7 +280,9 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen> {
                                 ? Icons.favorite
                                 : Icons.favorite_border,
                             label: liked ? 'Liked' : 'Like',
-                            color: liked ? Colors.red : null,
+                            color: liked
+                                ? Theme.of(context).colorScheme.primary
+                                : null,
                             onTap: () =>
                                 _storage.toggleLikedSong(currentSong),
                           ),
@@ -294,8 +297,9 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen> {
                             label: music.isRadioActive
                                 ? 'Radio on'
                                 : 'Start radio',
-                            color:
-                                music.isRadioActive ? Colors.red : null,
+                            color: music.isRadioActive
+                                ? Theme.of(context).colorScheme.primary
+                                : null,
                             onTap: _toggleRadio,
                           ),
                           _actionIcon(
@@ -359,7 +363,7 @@ class _MusicDownloadAction extends StatelessWidget {
         : done
             ? 'Downloaded'
             : 'Download';
-    final color = done ? Colors.red : null;
+    final color = done ? Theme.of(context).colorScheme.primary : null;
 
     return Column(
       mainAxisSize: MainAxisSize.min,

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:provider/provider.dart';
 
+import 'app_theme.dart';
 import 'download_service.dart';
 import 'music_playback_service.dart';
 import 'region_select_screen.dart';
@@ -45,14 +46,13 @@ class AdlessTubeApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final storage = context.watch<StorageService>();
+    final accent = Color(storage.accentColor);
     return MaterialApp(
       title: 'AdlessTube',
-      theme: ThemeData(useMaterial3: true, colorSchemeSeed: Colors.red),
-      darkTheme: ThemeData(
-        useMaterial3: true,
-        brightness: Brightness.dark,
-        colorSchemeSeed: Colors.red,
-      ),
+      theme: AppTheme.light(accent),
+      // Pitch Black is a dark theme with true-black surfaces.
+      darkTheme:
+          storage.isPitchBlack ? AppTheme.pitchBlack(accent) : AppTheme.dark(accent),
       themeMode: storage.themeMode,
       debugShowCheckedModeBanner: false,
       home: const _RootRouter(),

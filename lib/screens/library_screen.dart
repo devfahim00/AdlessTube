@@ -138,7 +138,7 @@ class _SubscriptionsTab extends StatelessWidget {
         final data = subs[url]!;
         return ListTile(
           leading: CircleAvatar(
-            backgroundColor: Colors.red[900],
+            backgroundColor: Theme.of(context).colorScheme.primary,
             backgroundImage:
                 (data['thumbnail']?.toString() ?? '').isNotEmpty
                     ? NetworkImage(data['thumbnail'].toString())

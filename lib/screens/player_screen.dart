@@ -9,6 +9,7 @@ import 'package:media_kit_video/media_kit_video.dart';
 import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../app_theme.dart';
 import '../download_service.dart';
 import '../models.dart';
 import '../newpipe_service.dart';
@@ -119,6 +120,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
   }
 
+  /// Cycles how the video fills the player surface: Fit → Crop → Stretch.
+  /// Persisted in settings so every player remembers the choice.
+  void _cycleVideoFit() {
+    final storage = context.read<StorageService>();
+    const order = StorageService.videoFitModes;
+    final next =
+        order[(order.indexOf(storage.videoFitMode) + 1) % order.length];
+    storage.setVideoFitMode(next);
+  }
+
   /// Swipe down on the video: in fullscreen it exits fullscreen, inline
   /// it shrinks the video into the mini player — exactly like the
   /// official YouTube app (there is no back button anymore).
@@ -156,7 +167,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     await showModalBottomSheet<void>(
       context: context,
-      backgroundColor: isDark ? Colors.grey[900] : null,
+      backgroundColor: AppTheme.sheetBackground(context),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
@@ -197,7 +208,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     await showModalBottomSheet<void>(
       context: context,
-      backgroundColor: isDark ? Colors.grey[900] : null,
+      backgroundColor: AppTheme.sheetBackground(context),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
@@ -243,7 +254,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
             if (widget.download != null)
               ListTile(
                 dense: true,
-                leading: const Icon(Icons.download_done, color: Colors.red),
+                leading: Icon(Icons.download_done,
+                    color: Theme.of(context).colorScheme.primary),
                 title: Text(
                   'Playing downloaded file (${widget.download!.quality})',
                   style: TextStyle(color: isDark ? Colors.white : null),
@@ -287,7 +299,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
             ? Icons.radio_button_checked
             : Icons.radio_button_unchecked,
         size: 20,
-        color: isCurrent ? Colors.red : null,
+        color:
+            isCurrent ? Theme.of(context).colorScheme.primary : null,
       ),
       title: Text(
         track.label,
@@ -309,7 +322,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
           decoration: BoxDecoration(
-            color: selected ? Colors.red : Colors.white12,
+            color:
+                selected ? Theme.of(context).colorScheme.primary : Colors.white12,
             borderRadius: BorderRadius.circular(20),
           ),
           child: Text(
@@ -351,7 +365,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
             ? Icons.radio_button_checked
             : Icons.radio_button_unchecked,
         size: 20,
-        color: isCurrent ? Colors.red : null,
+        color:
+            isCurrent ? Theme.of(context).colorScheme.primary : null,
       ),
       title: Text(
         _qualityLabel(stream),
@@ -375,7 +390,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
     await showModalBottomSheet<void>(
       context: context,
-      backgroundColor: isDark ? Colors.grey[900] : null,
+      backgroundColor: AppTheme.sheetBackground(context),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
@@ -402,7 +417,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
               _downloadingTile(active, isDark, sheetContext),
             ] else if (completed != null) ...[
               ListTile(
-                leading: const Icon(Icons.play_circle_fill, color: Colors.red),
+                leading: Icon(Icons.play_circle_fill,
+                    color: Theme.of(context).colorScheme.primary),
                 title: const Text('Play downloaded copy'),
                 subtitle: Text(
                   'Offline • ${completed.quality == 'Auto' ? 'best' : completed.quality} quality',
@@ -425,7 +441,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
               ),
               ListTile(
                 leading: Icon(Icons.delete_outline,
-                    color: isDark ? Colors.red[300] : Colors.red),
+                    color: Theme.of(context).colorScheme.error),
                 title: const Text('Delete download'),
                 subtitle:
                     const Text('Removes the saved files from this device'),
@@ -436,7 +452,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
               ),
             ] else ...[
               ListTile(
-                leading: const Icon(Icons.video_library, color: Colors.red),
+                leading: Icon(Icons.video_library,
+                    color: Theme.of(context).colorScheme.primary),
                 title: const Text('Video + audio'),
                 subtitle: const Text('Best quality with sound (adaptive if needed)'),
                 onTap: () {
@@ -445,7 +462,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 },
               ),
               ListTile(
-                leading: const Icon(Icons.videocam, color: Colors.red),
+                leading: Icon(Icons.videocam,
+                    color: Theme.of(context).colorScheme.primary),
                 title: const Text('Video only'),
                 subtitle: const Text('Video track without audio'),
                 onTap: () {
@@ -454,7 +472,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 },
               ),
               ListTile(
-                leading: const Icon(Icons.audiotrack, color: Colors.red),
+                leading: Icon(Icons.audiotrack,
+                    color: Theme.of(context).colorScheme.primary),
                 title: const Text('Audio only'),
                 subtitle: const Text('Audio track (m4a/webm)'),
                 onTap: () {
@@ -526,7 +545,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
           ),
           FilledButton(
             style: FilledButton.styleFrom(
-              backgroundColor: Colors.red,
+              backgroundColor: Theme.of(context).colorScheme.primary,
             ),
             onPressed: () => Navigator.pop(dialogContext, true),
             child: const Text('Delete'),
@@ -563,7 +582,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     await showModalBottomSheet<void>(
       context: context,
-      backgroundColor: isDark ? Colors.grey[900] : null,
+      backgroundColor: AppTheme.sheetBackground(context),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
@@ -587,7 +606,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 dense: true,
                 leading: Icon(
                   quality == 'Best' ? Icons.audiotrack : Icons.high_quality,
-                  color: Colors.red,
+                  color: Theme.of(context).colorScheme.primary,
                 ),
                 title: Text(
                   quality == 'Auto'
@@ -643,9 +662,27 @@ class _PlayerScreenState extends State<PlayerScreen> {
           onOpenSettings: _openSettingsSheet,
           onSwipeDown: _onSwipeDown,
           animationsEnabled: animationsEnabled,
+          fitMode: storage.videoFitMode,
+          onCycleFit: _cycleVideoFit,
         );
 
+    // How the video scales inside the player surface.
+    final videoFit = switch (storage.videoFitMode) {
+      'crop' => BoxFit.cover,
+      'stretch' => BoxFit.fill,
+      _ => BoxFit.contain,
+    };
+
+    // The player surface follows the selected fit mode (fit / crop /
+    // stretch) — the same choice applies inline and in fullscreen.
     final video = Video(
+      controller: _vps.controller,
+      fit: videoFit,
+      controls: (state) => buildControls(),
+    );
+
+    // PiP always letterboxes — crop/stretch would distort the tiny window.
+    final pipVideo = Video(
       controller: _vps.controller,
       controls: (state) => buildControls(),
     );
@@ -672,9 +709,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
         },
         child: Scaffold(
           backgroundColor: Colors.black,
-          body: Center(
-            child: AspectRatio(aspectRatio: 16 / 9, child: videoArea),
-          ),
+          // Fullscreen = the whole screen: the video surface stretches
+          // edge to edge and the selected fit mode decides how the picture
+          // scales inside it (no more empty side bars from a forced 16:9
+          // box on modern tall screens).
+          body: videoArea,
         ),
       );
     }
@@ -700,7 +739,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 child: AspectRatio(
                   aspectRatio: 16 / 9,
                   // PiP mirrors the page: placeholder while audio-only.
-                  child: audioOnly ? const _AudioOnlyPlaceholder() : video,
+                  // Always letterboxed (contain) — crop/stretch would
+                  // distort the tiny PiP window.
+                  child: audioOnly ? const _AudioOnlyPlaceholder() : pipVideo,
                 ),
               ),
             ),
@@ -734,7 +775,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(Icons.error_outline, size: 60, color: Colors.red),
+              Icon(Icons.error_outline,
+                  size: 60, color: Theme.of(context).colorScheme.error),
               const SizedBox(height: 16),
               Text(
                 vpsError,
@@ -939,11 +981,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
     required VoidCallback onTap,
     bool highlight = false,
   }) {
+    final accent = Theme.of(context).colorScheme.primary;
     return Padding(
       padding: const EdgeInsets.only(right: 8),
       child: Material(
         color: highlight
-            ? Colors.red.withValues(alpha: 0.25)
+            ? accent.withValues(alpha: 0.25)
             : Colors.white.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(20),
         child: InkWell(
@@ -954,12 +997,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
             child: Row(
               children: [
                 Icon(icon,
-                    size: 20, color: highlight ? Colors.red : Colors.white),
+                    size: 20, color: highlight ? accent : Colors.white),
                 const SizedBox(width: 6),
                 Text(
                   label,
                   style: TextStyle(
-                    color: highlight ? Colors.red : Colors.white,
+                    color: highlight ? accent : Colors.white,
                     fontWeight: FontWeight.w500,
                   ),
                 ),
@@ -985,6 +1028,7 @@ class _AudioLanguagePill extends StatelessWidget {
     final vps = context.watch<VideoPlaybackService>();
     if (vps.audioTracks.length < 2) return const SizedBox.shrink();
 
+    final accent = Theme.of(context).colorScheme.primary;
     final current = vps.currentAudioTrack;
     final dubbed = !(current?.isOriginal ?? true);
     var label = 'Audio';
@@ -999,7 +1043,7 @@ class _AudioLanguagePill extends StatelessWidget {
       padding: const EdgeInsets.only(right: 8),
       child: Material(
         color: dubbed
-            ? Colors.red.withValues(alpha: 0.25)
+            ? accent.withValues(alpha: 0.25)
             : Colors.white.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(20),
         child: InkWell(
@@ -1012,13 +1056,13 @@ class _AudioLanguagePill extends StatelessWidget {
                 Icon(
                   Icons.record_voice_over,
                   size: 20,
-                  color: dubbed ? Colors.red : Colors.white,
+                  color: dubbed ? accent : Colors.white,
                 ),
                 const SizedBox(width: 6),
                 Text(
                   label,
                   style: TextStyle(
-                    color: dubbed ? Colors.red : Colors.white,
+                    color: dubbed ? accent : Colors.white,
                     fontWeight: FontWeight.w500,
                   ),
                 ),
@@ -1055,6 +1099,7 @@ class _AudioOnlyPlaceholderState extends State<_AudioOnlyPlaceholder>
 
   @override
   Widget build(BuildContext context) {
+    final accent = Theme.of(context).colorScheme.primary;
     return Container(
       color: Colors.black,
       child: Center(
@@ -1068,15 +1113,15 @@ class _AudioOnlyPlaceholderState extends State<_AudioOnlyPlaceholder>
                 padding: const EdgeInsets.all(18),
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: Colors.red.withValues(alpha: 0.14),
+                  color: accent.withValues(alpha: 0.14),
                   border: Border.all(
-                    color: Colors.red.withValues(alpha: 0.55),
+                    color: accent.withValues(alpha: 0.55),
                     width: 1.5,
                   ),
                 ),
-                child: const Icon(
+                child: Icon(
                   Icons.headphones,
-                  color: Colors.red,
+                  color: accent,
                   size: 40,
                 ),
               ),
@@ -1120,6 +1165,7 @@ class _DownloadActionPill extends StatelessWidget {
     final active = downloads.activeFor(video.id);
     final done = active == null && downloads.isDownloaded(video.id);
 
+    final accent = Theme.of(context).colorScheme.primary;
     final highlight = active != null || done;
     final label = active != null
         ? (active.progress > 0 ? '${(active.progress * 100).round()}%' : '…')
@@ -1131,7 +1177,7 @@ class _DownloadActionPill extends StatelessWidget {
       padding: const EdgeInsets.only(right: 8),
       child: Material(
         color: highlight
-            ? Colors.red.withValues(alpha: 0.25)
+            ? accent.withValues(alpha: 0.25)
             : Colors.white.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(20),
         child: InkWell(
@@ -1148,20 +1194,20 @@ class _DownloadActionPill extends StatelessWidget {
                     child: CircularProgressIndicator(
                       value: active.progress > 0 ? active.progress : null,
                       strokeWidth: 2.4,
-                      color: Colors.red,
+                      color: accent,
                     ),
                   )
                 else
                   Icon(
                     done ? Icons.download_done : Icons.download_outlined,
                     size: 20,
-                    color: highlight ? Colors.red : Colors.white,
+                    color: highlight ? accent : Colors.white,
                   ),
                 const SizedBox(width: 6),
                 Text(
                   label,
                   style: TextStyle(
-                    color: highlight ? Colors.red : Colors.white,
+                    color: highlight ? accent : Colors.white,
                     fontWeight: FontWeight.w500,
                   ),
                 ),
