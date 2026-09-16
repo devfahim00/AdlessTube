@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../download_service.dart';
 import '../models.dart';
 import '../music_playback_service.dart';
+import '../storage_service.dart';
 import '../widgets.dart';
 import 'music_player_screen.dart';
 import 'player_screen.dart';
@@ -243,8 +244,10 @@ class _DownloadTile extends StatelessWidget {
     } else {
       Navigator.push(
         context,
-        MaterialPageRoute(
-          builder: (_) => PlayerScreen(video: video, download: item),
+        pushPlayerRoute(
+          PlayerScreen(video: video, download: item),
+          animationsEnabled:
+              context.read<StorageService>().animationsEnabled,
         ),
       );
     }

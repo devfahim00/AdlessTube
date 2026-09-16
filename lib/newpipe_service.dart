@@ -1,5 +1,6 @@
 import 'package:newpipeextractor_dart/newpipeextractor_dart.dart';
 import 'models.dart';
+import 'topic_miner.dart';
 
 class NewPipeService {
   /// Channel profiles cached per URL so avatars are fetched only once.
@@ -201,36 +202,134 @@ class NewPipeService {
     }
   }
 
+  /// A channel shorts-tab fetch that never throws — failures just give
+  /// an empty page so one dead channel cannot break the Shorts feed.
+  Future<({List<VideoItem> items, PageToken? next})> _safeShortsTab(
+      String channelUrl) async {
+    try {
+      return await getChannelTabPage(channelUrl, 'shorts');
+    } catch (_) {
+      return (items: <VideoItem>[], next: null);
+    }
+  }
+
+  /// A video-search page fetch that never throws.
+  Future<({List<VideoItem> items, PageToken? next})> _safeSearchPage(
+      String query) async {
+    try {
+      return await searchVideoPage(query);
+    } catch (_) {
+      return (items: <VideoItem>[], next: null);
+    }
+  }
+
+  /// ═══════════════════ SHORTS FEED ═══════════════════
+  ///
+  /// Personalized Shorts, built the way the official app feels:
+  /// * shorts from subscribed channels,
+  /// * shorts from channels the user watches a lot (but didn't subscribe),
+  /// * shorts about the topics the user usually watches (taste mining),
+  /// * always a slice of random/regional shorts for discovery.
+  ///
+  /// Every source is capped and the final list is interleaved one short
+  /// per source per pass, so the same channel never dominates the feed —
+  /// and random shorts keep appearing between the personalized ones.
   Future<List<VideoItem>> getShorts({
     required String region,
     List<String> subscribedChannels = const [],
+    List<VideoItem> watchHistory = const [],
   }) async {
     final seen = <String>{};
-    final shorts = <VideoItem>[];
+    // channel key -> capped list of shorts
+    final buckets = <String, List<VideoItem>>{};
 
-    void addAll(Iterable<VideoItem> items) {
+    bool isShortLike(VideoItem v) =>
+        v.isShort ||
+        (v.duration != null &&
+            v.duration!.inSeconds > 0 &&
+            v.duration!.inSeconds <= 180);
+
+    void addAll(Iterable<VideoItem> items, String bucketKey, {int cap = 3}) {
       for (final item in items) {
-        if (!item.isLive && seen.add(item.id)) shorts.add(item);
+        if (item.isLive || !isShortLike(item)) continue;
+        if (!seen.add(item.id)) continue;
+        final list = buckets.putIfAbsent(bucketKey, () => []);
+        if (list.length < cap) list.add(item);
       }
     }
 
-    for (final url in subscribedChannels.take(4)) {
-      try {
-        final page = await getChannelTabPage(url, 'shorts');
-        addAll(page.items);
-      } catch (_) {}
+    // Channels worth pulling shorts from: subscriptions first, then the
+    // channels that show up most often in recent watch history.
+    final subscribed = subscribedChannels.toList()..shuffle();
+    final historyChannels = <String, int>{};
+    for (final video in watchHistory.take(40)) {
+      final url = video.uploaderUrl;
+      if (url.isEmpty || subscribed.contains(url)) continue;
+      historyChannels[url] = (historyChannels[url] ?? 0) + 1;
+    }
+    final frequentHistoryChannels = historyChannels.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+
+    final channelUrls = [
+      ...subscribed.take(4),
+      ...frequentHistoryChannels.take(4).map((e) => e.key),
+    ];
+
+    // Pull every channel's shorts tab in parallel; a channel that fails
+    // simply contributes nothing instead of breaking the whole feed.
+    final channelResults = await Future.wait(
+      [for (final url in channelUrls) _safeShortsTab(url)],
+    );
+    for (var i = 0; i < channelUrls.length && i < channelResults.length; i++) {
+      addAll(channelResults[i].items, channelUrls[i]);
     }
 
+    // Topic-based shorts: what the user usually watches, as shorts.
+    final topics = TopicMiner.mineTopics(watchHistory.take(30).toList())
+        .take(4)
+        .toList();
     final regionName = _regionToName(region);
-    // Always mix suggested shorts in, even when the user has subscriptions.
-    for (final query in ['$regionName shorts', 'popular shorts $regionName']) {
-      try {
-        final page = await searchVideoPage(query);
-        addAll(page.items);
-      } catch (_) {}
+    final randomQueries = [
+      '$regionName shorts',
+      'popular shorts $regionName',
+      'viral shorts',
+    ]..shuffle();
+
+    final searchQueries = [
+      for (final topic in topics) '$topic shorts',
+      ...randomQueries.take(2),
+    ];
+    final searchResults = await Future.wait(
+      [for (final q in searchQueries) _safeSearchPage(q)],
+    );
+    final randomPool = <VideoItem>[];
+    for (var i = 0; i < searchQueries.length; i++) {
+      // Topic results go to their own bucket (still channel-capped later
+      // by interleave); random/regional ones mix into one discovery pool.
+      if (i < topics.length) {
+        addAll(searchResults[i].items, 'topic-${searchQueries[i]}');
+      } else {
+        randomPool.addAll(searchResults[i].items);
+      }
     }
-    shorts.shuffle();
-    return shorts;
+    randomPool.shuffle();
+    addAll(randomPool, 'random', cap: 6);
+
+    // Interleave: one short per bucket per pass → no two consecutive
+    // shorts from the same channel, random ones woven in between.
+    final queues = buckets.values.toList()..shuffle();
+    final feed = <VideoItem>[];
+    var remaining = queues.any((q) => q.isNotEmpty);
+    while (remaining) {
+      remaining = false;
+      for (final queue in queues) {
+        if (queue.isNotEmpty) {
+          feed.add(queue.removeAt(0));
+          if (queue.isNotEmpty) remaining = true;
+        }
+      }
+    }
+    return feed;
   }
 
   /// Builds a music discovery feed from the user's liked songs and region.
@@ -389,6 +488,7 @@ class NewPipeService {
           audioUrl: audioUrl,
           quality: quality,
           format: format,
+          container: _containerOf(stream.formatSuffix, stream.formatName),
         );
       }
     } catch (_) {}
@@ -404,6 +504,7 @@ class NewPipeService {
           url: url,
           quality: q,
           format: 'muxed',
+          container: _containerOf(s.formatSuffix, s.formatName),
         );
       }
     } catch (_) {}
@@ -420,6 +521,7 @@ class NewPipeService {
               url: muxedUrl,
               quality: q,
               format: 'muxed',
+              container: _containerOf(muxed.formatSuffix, muxed.formatName),
             );
           }
         }
@@ -573,6 +675,19 @@ class NewPipeService {
   }
 
   // ═══════════════════ HELPERS ═══════════════════
+
+  /// Pretty container label (mp4 / webm / 3gp) from the extractor's raw
+  /// format suffix/name fields, e.g. `.mp4` or `MPEG-4`.
+  String _containerOf(String? formatSuffix, String? formatName) {
+    final raw = '${formatSuffix ?? ''} ${formatName ?? ''}'
+        .toLowerCase()
+        .replaceAll('.', ' ')
+        .trim();
+    if (raw.contains('webm')) return 'webm';
+    if (raw.contains('mpeg') || raw.contains('mp4')) return 'mp4';
+    if (raw.contains('3gp')) return '3gp';
+    return '';
+  }
 
   String _normalizeQuality(String? raw) {
     if (raw == null || raw.isEmpty) return 'auto';

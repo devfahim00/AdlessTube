@@ -40,6 +40,15 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _discovering = false;
   late final StorageService _storage;
 
+  // ── Channel diversity ──
+  // The feed never shows more than [_channelMaxInWindow] videos from one
+  // channel inside the last [_channelWindow] items, so a single source
+  // (one subscription, one related list) can never dump 10+ videos from
+  // the same channel back to back.
+  static const _channelWindow = 8;
+  static const _channelMaxInWindow = 2;
+  final List<String> _recentUploaders = [];
+
   @override
   void initState() {
     super.initState();
@@ -139,24 +148,75 @@ class _HomeScreenState extends State<HomeScreen> {
     _persistShown();
   }
 
+  /// True when [video]'s channel already fills its diversity quota in
+  /// the recent window — the item should be held back for now.
+  bool _channelTiring(VideoItem video) {
+    final url = video.uploaderUrl;
+    if (url.isEmpty) return false;
+    var hits = 0;
+    for (final uploader in _recentUploaders) {
+      if (uploader == url) hits++;
+    }
+    return hits >= _channelMaxInWindow;
+  }
+
+  void _rememberUploader(VideoItem video) {
+    if (video.uploaderUrl.isEmpty) return;
+    _recentUploaders.add(video.uploaderUrl);
+    if (_recentUploaders.length > _channelWindow) {
+      _recentUploaders.removeAt(0);
+    }
+  }
+
   /// Takes up to [max] acceptable videos out of the source queues,
   /// round-robin: one video per source per pass → interleaved feed.
+  ///
+  /// Videos whose channel is over-represented in the recent window are
+  /// deferred back to their source's queue instead of being dropped —
+  /// they get served once other channels have had their turn. If nothing
+  /// else can be served at all, deferred items are accepted anyway (a
+  /// repetitive feed still beats an empty one).
   int _drainQueues(int max) {
     if (max <= 0) return 0;
     var count = 0;
     var progress = true;
     while (count < max && progress) {
       progress = false;
+      final deferred = <(FeedSource, VideoItem)>[];
       for (final source in _sources) {
         if (count >= max) break;
         while (source.queue.isNotEmpty) {
           final video = source.queue.removeAt(0);
-          if (_tryAdd(video)) {
-            count++;
-            progress = true;
-            break;
+          // Already watched / recently shown / duplicated → gone for good.
+          if (video.isLive ||
+              video.isShort ||
+              _watchedIds.contains(video.id) ||
+              _recentlyShown.contains(video.id) ||
+              _seen.contains(video.id)) {
+            continue;
           }
+          // Fresh content from an over-represented channel → hold back.
+          if (_channelTiring(video)) {
+            deferred.add((source, video));
+            continue;
+          }
+          _tryAdd(video); // fresh and allowed — always succeeds
+          count++;
+          progress = true;
+          break;
         }
+      }
+      if (!progress && deferred.isNotEmpty && count < max) {
+        // Diversity can't be satisfied — serve the held-back items rather
+        // than leaving the feed short.
+        for (final d in deferred) {
+          if (count >= max) break;
+          if (_tryAdd(d.$2)) count++;
+        }
+      }
+      // Leftovers return to the back of their source queues for later.
+      for (final d in deferred) {
+        if (!_seen.contains(d.$2.id)) d.$1.queue.add(d.$2);
       }
     }
     return count;
@@ -171,6 +231,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!_seen.add(video.id)) return false;
     _feed.add(video);
     _newShown.add(video.id);
+    _rememberUploader(video);
     return true;
   }
 
@@ -272,9 +333,11 @@ class _HomeScreenState extends State<HomeScreen> {
                             if (context.mounted) {
                               await Navigator.push(
                                 context,
-                                MaterialPageRoute(
-                                    builder: (_) =>
-                                        PlayerScreen(video: video)),
+                                pushPlayerRoute(
+                                  PlayerScreen(video: video),
+                                  animationsEnabled:
+                                      storage.animationsEnabled,
+                                ),
                               );
                             }
                           },

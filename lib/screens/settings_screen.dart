@@ -74,6 +74,21 @@ class SettingsScreen extends StatelessWidget {
               },
             ),
           ),
+          const Divider(),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 20, 16, 8),
+            child: Text('Animations',
+                style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+          SwitchListTile(
+            secondary: const Icon(Icons.animation),
+            title: const Text('UI animations'),
+            subtitle: const Text(
+                'Tab switches, page transitions and the mini player animate. '
+                'Turn off for instant switches.'),
+            value: storage.animationsEnabled,
+            onChanged: (enabled) => storage.setAnimationsEnabled(enabled),
+          ),
         ],
       ),
     );

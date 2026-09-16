@@ -43,6 +43,11 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
   AudioTrackOption? currentAudioTrack;
   double playbackSpeed = 1.0;
 
+  /// Audio-only mode: playback keeps running but the video surface is
+  /// hidden (the player page shows a placeholder instead). Lets users
+  /// listen in the background feel without PiP.
+  bool audioOnlyMode = false;
+
   bool loading = true;
   String? error;
   bool isPlaying = false;
@@ -112,6 +117,7 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
     audioTracks = [];
     currentAudioTrack = null;
     playbackSpeed = 1.0;
+    audioOnlyMode = false; // audio-only is a per-video choice
     loading = true;
     error = null;
     miniVisible = false;
@@ -204,6 +210,7 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
     error = null;
     loading = false;
     isPlaying = false;
+    audioOnlyMode = false;
     miniVisible = false;
     position = Duration.zero;
     duration = Duration.zero;
@@ -211,6 +218,14 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   // ─────────── Controls ───────────
+
+  /// Toggles audio-only mode for the current video. Audio keeps playing;
+  /// only the video surface is hidden while the mode is on.
+  void toggleAudioOnlyMode() {
+    if (currentVideo == null) return;
+    audioOnlyMode = !audioOnlyMode;
+    notifyListeners();
+  }
 
   Future<void> togglePlayPause() async {
     if (currentVideo == null) return;

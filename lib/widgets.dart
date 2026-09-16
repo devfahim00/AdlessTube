@@ -1004,3 +1004,39 @@ String formatViews(int? count) {
   }
   return count.toString();
 }
+
+// ═══════════════════════ ROUTES ═══════════════════════
+
+/// YouTube-style page route: the new screen slides up from the bottom
+/// with a fade (like opening a video in the official app). Pass the
+/// Settings ▸ Animations value from the caller — disabled means an
+/// instant switch.
+PageRoute<T> pushPlayerRoute<T>(
+  Widget page, {
+  bool animationsEnabled = true,
+}) {
+  final duration =
+      animationsEnabled ? const Duration(milliseconds: 300) : Duration.zero;
+  return PageRouteBuilder<T>(
+    pageBuilder: (context, animation, secondaryAnimation) => page,
+    transitionDuration: duration,
+    reverseTransitionDuration: duration,
+    transitionsBuilder: (context, animation, secondaryAnimation, child) {
+      final curved = CurvedAnimation(
+        parent: animation,
+        curve: Curves.easeOutCubic,
+        reverseCurve: Curves.easeInCubic,
+      );
+      return FadeTransition(
+        opacity: curved,
+        child: SlideTransition(
+          position: Tween<Offset>(
+            begin: const Offset(0, 0.12),
+            end: Offset.zero,
+          ).animate(curved),
+          child: child,
+        ),
+      );
+    },
+  );
+}

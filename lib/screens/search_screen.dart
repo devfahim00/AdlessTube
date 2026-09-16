@@ -227,9 +227,10 @@ class _SearchScreenState extends State<SearchScreen>
                                         final video = _videos[i];
                                         await storage.addToHistory(video);
                                         navigator.push(
-                                          MaterialPageRoute(
-                                            builder: (_) => PlayerScreen(
-                                                video: video),
+                                          pushPlayerRoute(
+                                            PlayerScreen(video: video),
+                                            animationsEnabled: storage
+                                                .animationsEnabled,
                                           ),
                                         );
                                       },

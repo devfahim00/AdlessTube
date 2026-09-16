@@ -94,8 +94,11 @@ class _HistoryTab extends StatelessWidget {
               video: history[i],
               onTap: () => Navigator.push(
                 context,
-                MaterialPageRoute(
-                  builder: (_) => PlayerScreen(video: history[i]),
+                pushPlayerRoute(
+                  PlayerScreen(video: history[i]),
+                  animationsEnabled: context
+                      .read<StorageService>()
+                      .animationsEnabled,
                 ),
               ),
             ),
@@ -200,8 +203,11 @@ class _SavedTab extends StatelessWidget {
               video: saved[i],
               onTap: () => Navigator.push(
                 context,
-                MaterialPageRoute(
-                  builder: (_) => PlayerScreen(video: saved[i]),
+                pushPlayerRoute(
+                  PlayerScreen(video: saved[i]),
+                  animationsEnabled: context
+                      .read<StorageService>()
+                      .animationsEnabled,
                 ),
               ),
             ),

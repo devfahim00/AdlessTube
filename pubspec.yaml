@@ -1,7 +1,7 @@
 name: adlesstube
 description: "An ad-free YouTube client built with Flutter and NewPipe Extractor."
 publish_to: 'none'
-version: 2.0.0
+version: 2.1.0
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
@@ -37,8 +37,10 @@ dependencies:
 
   # Local file paths for downloads
   path_provider: ^2.1.4
-  # Native share sheet (video links)
+  # Native share sheet (video links, data backups)
   share_plus: ^10.0.0
+  # System file picker (import data backups)
+  file_picker: ^8.1.6
 
 dev_dependencies:
   flutter_test:

@@ -21,6 +21,18 @@ class StorageService extends ChangeNotifier {
   static const _servicesSelectedKey = 'services_selected';
   static const _enabledServicesKey = 'enabled_services';
   static const _shownFeedKey = 'shown_feed_ids';
+  static const _animationsEnabledKey = 'animations_enabled';
+
+  /// Box names included in a backup export / import.
+  static const _backupBoxes = [
+    _historyBox,
+    _likedSongsBox,
+    _subscriptionsBox,
+    _settingsBox,
+    _playbackBox,
+    _savedVideosBox,
+    _searchHistoryBox,
+  ];
 
   /// How many recently shown feed videos are remembered — pull-to-refresh
   /// skips these so the feed genuinely changes between refreshes.
@@ -192,6 +204,72 @@ class StorageService extends ChangeNotifier {
   Future<void> setPreferredAudioLocale(String locale) async {
     await Hive.box(_settingsBox).put(_preferredAudioLocaleKey, locale);
     notifyListeners();
+  }
+
+  // ─────────── Animations ───────────
+
+  /// Whether UI animations (tab transitions, page slides, mini player)
+  /// are enabled. Users can turn them off in Settings.
+  bool get animationsEnabled => Hive.box(_settingsBox)
+      .get(_animationsEnabledKey, defaultValue: true) as bool;
+
+  Future<void> setAnimationsEnabled(bool enabled) async {
+    await Hive.box(_settingsBox).put(_animationsEnabledKey, enabled);
+    notifyListeners();
+  }
+
+  // ─────────── Backup: export / import ───────────
+
+  /// Serializes every user-data box into a JSON-friendly map that can be
+  /// written to a file and restored later with [importData].
+  ///
+  /// Downloads are intentionally excluded: the media files themselves
+  /// live outside the app data and cannot travel inside a JSON backup.
+  Future<Map<String, dynamic>> exportData() async {
+    final boxes = <String, dynamic>{};
+    for (final name in _backupBoxes) {
+      final box = Hive.box(name);
+      boxes[name] = {
+        for (final key in box.keys) key.toString(): box.get(key),
+      };
+    }
+    return {
+      'app': 'AdlessTube',
+      'backupVersion': 1,
+      'exportedAt': DateTime.now().toIso8601String(),
+      'boxes': boxes,
+    };
+  }
+
+  /// Validates and restores a backup produced by [exportData].
+  /// Imported entries overwrite identical keys but never delete data
+  /// that is not present in the backup, so importing into a used app
+  /// merges instead of wiping.
+  ///
+  /// Returns the number of restored entries, or throws [FormatException]
+  /// when the payload is not an AdlessTube backup.
+  Future<int> importData(Map<String, dynamic> data) async {
+    if (data['app'] != 'AdlessTube' || data['boxes'] is! Map) {
+      throw const FormatException('Not an AdlessTube backup file.');
+    }
+    final boxes = Map<String, dynamic>.from(data['boxes'] as Map);
+    var restored = 0;
+    for (final name in _backupBoxes) {
+      final raw = boxes[name];
+      if (raw is! Map) continue;
+      final box = Hive.box(name);
+      for (final entry in raw.entries) {
+        final key = entry.key.toString();
+        final value = entry.value;
+        if (value == null) continue;
+        if (box.get(key) != value) {
+          await box.put(key, value);
+        }
+        restored++;
+      }
+    }
+    notifyListeners();
+    return restored;
   }
 
   // ─────────── Feed impressions ───────────

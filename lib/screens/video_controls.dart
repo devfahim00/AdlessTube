@@ -5,26 +5,36 @@ import 'package:media_kit/media_kit.dart';
 
 /// YouTube-style video controls for the player.
 ///
-/// * Single tap anywhere toggles play/pause.
+/// * Single tap anywhere toggles play/pause; while paused a large pause
+///   badge sits in the center of the video so the state is obvious.
 /// * Double tap on the left/right half rewinds/forwards 10 seconds —
 ///   works inline (not only in fullscreen).
-/// * Top bar: back button + gear (settings) on the upper-right corner.
+/// * Swiping down minimizes the video into the mini player (or exits
+///   fullscreen when already fullscreen) — like the official app, there
+///   is no back button on the video.
+/// * Top bar: gear (settings) on the upper-right corner.
 /// * Bottom bar: thin red progress bar, elapsed/total time and a
 ///   fullscreen toggle.
 class YouTubeVideoControls extends StatefulWidget {
   final Player player;
   final bool isFullscreen;
-  final VoidCallback onBack;
   final VoidCallback onToggleFullscreen;
   final VoidCallback onOpenSettings;
+
+  /// Vertical swipe-down gesture on the video surface.
+  final VoidCallback onSwipeDown;
+
+  /// Whether UI animations are enabled (settings toggle).
+  final bool animationsEnabled;
 
   const YouTubeVideoControls({
     super.key,
     required this.player,
     required this.isFullscreen,
-    required this.onBack,
     required this.onToggleFullscreen,
     required this.onOpenSettings,
+    required this.onSwipeDown,
+    this.animationsEnabled = true,
   });
 
   @override
@@ -33,6 +43,7 @@ class YouTubeVideoControls extends StatefulWidget {
 
 class _YouTubeVideoControlsState extends State<YouTubeVideoControls> {
   static const _hideAfter = Duration(seconds: 3);
+  static const _swipeThreshold = 72.0;
 
   bool _visible = true;
   Timer? _hideTimer;
@@ -40,6 +51,7 @@ class _YouTubeVideoControlsState extends State<YouTubeVideoControls> {
   int _seekFeedbackSide = 0; // -1 left | 0 none | 1 right
   Timer? _seekFeedbackTimer;
   double _dragValue = -1; // -1 = not dragging
+  double _verticalDrag = 0; // accumulated downward drag, 0 = none
 
   @override
   void initState() {
@@ -102,113 +114,190 @@ class _YouTubeVideoControlsState extends State<YouTubeVideoControls> {
     }
   }
 
+  Duration get _animDuration =>
+      widget.animationsEnabled ? const Duration(milliseconds: 200) : Duration.zero;
+
   @override
   Widget build(BuildContext context) {
     final player = widget.player;
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        // Tap catcher — single tap play/pause, double tap seek.
-        GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: _onTap,
-          onDoubleTapDown: (details) => _doubleTapPosition = details.localPosition,
-          onDoubleTap: _onDoubleTap,
-          child: const SizedBox.expand(),
-        ),
-        // Double-tap seek feedback (YouTube-style ripple).
-        if (_seekFeedbackSide != 0)
-          Align(
-            alignment: _seekFeedbackSide < 0
-                ? Alignment.centerLeft
-                : Alignment.centerRight,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24),
-              child: Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.55),
-                  shape: BoxShape.circle,
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      _seekFeedbackSide < 0
-                          ? Icons.replay_10
-                          : Icons.forward_10,
-                      color: Colors.white,
-                      size: 30,
-                    ),
-                  ],
-                ),
-              ),
-            ),
+    final dragOffset = _verticalDrag * 0.25;
+    return Transform.translate(
+      offset: Offset(0, dragOffset),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          // Tap catcher — single tap play/pause, double tap seek, swipe
+          // down minimizes into the mini player.
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: _onTap,
+            onDoubleTapDown: (details) => _doubleTapPosition = details.localPosition,
+            onDoubleTap: _onDoubleTap,
+            onVerticalDragUpdate: (details) {
+              if (details.delta.dy > 0) {
+                setState(() => _verticalDrag += details.delta.dy);
+              }
+            },
+            onVerticalDragEnd: (details) {
+              final triggered = _verticalDrag >= _swipeThreshold;
+              setState(() => _verticalDrag = 0);
+              if (triggered) widget.onSwipeDown();
+            },
+            onVerticalDragCancel: () {
+              if (mounted) setState(() => _verticalDrag = 0);
+            },
+            child: const SizedBox.expand(),
           ),
-        // Buffering spinner.
-        StreamBuilder<bool>(
-          stream: player.stream.buffering,
-          builder: (context, snapshot) {
-            final buffering = snapshot.data ?? false;
-            if (!buffering) return const SizedBox.shrink();
-            return const Center(
-              child: CircularProgressIndicator(color: Colors.white),
-            );
-          },
-        ),
-        // Controls overlay.
-        AnimatedOpacity(
-          opacity: _visible ? 1.0 : 0.0,
-          duration: const Duration(milliseconds: 200),
-          child: IgnorePointer(
-            ignoring: !_visible,
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                // Top bar: back + gear.
-                Align(
-                  alignment: Alignment.topCenter,
-                  child: Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(horizontal: 4),
-                    decoration: const BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [Colors.black54, Colors.transparent],
+          // Swipe-down hint: the video drags with the finger and a small
+          // chevron fades in past half the trigger distance.
+          if (_verticalDrag > 8)
+            IgnorePointer(
+              child: AnimatedOpacity(
+                opacity: (_verticalDrag / _swipeThreshold).clamp(0.0, 1.0),
+                duration: Duration.zero,
+                child: Align(
+                  alignment: Alignment.bottomCenter,
+                  child: Padding(
+                    padding: const EdgeInsets.only(bottom: 18),
+                    child: Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.55),
+                        shape: BoxShape.circle,
                       ),
-                    ),
-                    child: Row(
-                      children: [
-                        IconButton(
-                          icon: const Icon(Icons.arrow_back,
-                              color: Colors.white),
-                          tooltip: 'Back',
-                          onPressed: widget.onBack,
-                        ),
-                        const Spacer(),
-                        IconButton(
-                          icon: const Icon(Icons.settings, color: Colors.white),
-                          tooltip: 'Settings',
-                          onPressed: () {
-                            _scheduleHide();
-                            widget.onOpenSettings();
-                          },
-                        ),
-                      ],
+                      child: const Icon(
+                        Icons.keyboard_arrow_down,
+                        color: Colors.white,
+                        size: 28,
+                      ),
                     ),
                   ),
                 ),
-                // Bottom bar: progress + time + fullscreen.
-                Align(
-                  alignment: Alignment.bottomCenter,
-                  child: _buildBottomBar(player),
+              ),
+            ),
+          // Double-tap seek feedback (YouTube-style ripple).
+          if (_seekFeedbackSide != 0)
+            Align(
+              alignment: _seekFeedbackSide < 0
+                  ? Alignment.centerLeft
+                  : Alignment.centerRight,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.55),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        _seekFeedbackSide < 0
+                            ? Icons.replay_10
+                            : Icons.forward_10,
+                        color: Colors.white,
+                        size: 30,
+                      ),
+                    ],
+                  ),
                 ),
-              ],
+              ),
+            ),
+          // Paused badge: a large pause icon stays over the video while
+          // playback is paused; nothing shows while playing.
+          StreamBuilder<bool>(
+            stream: player.stream.playing,
+            builder: (context, playingSnapshot) {
+              final playing = playingSnapshot.data ?? true;
+              return StreamBuilder<bool>(
+                stream: player.stream.buffering,
+                builder: (context, bufferingSnapshot) {
+                  final buffering = bufferingSnapshot.data ?? false;
+                  if (playing || buffering) return const SizedBox.shrink();
+                  return IgnorePointer(
+                    child: AnimatedOpacity(
+                      opacity: 1.0,
+                      duration: _animDuration,
+                      child: Center(
+                        child: Container(
+                          padding: const EdgeInsets.all(22),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.55),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.pause,
+                            color: Colors.white,
+                            size: 44,
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+          // Buffering spinner.
+          StreamBuilder<bool>(
+            stream: player.stream.buffering,
+            builder: (context, snapshot) {
+              final buffering = snapshot.data ?? false;
+              if (!buffering) return const SizedBox.shrink();
+              return const Center(
+                child: CircularProgressIndicator(color: Colors.white),
+              );
+            },
+          ),
+          // Controls overlay.
+          AnimatedOpacity(
+            opacity: _visible ? 1.0 : 0.0,
+            duration: _animDuration,
+            child: IgnorePointer(
+              ignoring: !_visible,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  // Top bar: gear only (back is a swipe down, like YT).
+                  Align(
+                    alignment: Alignment.topCenter,
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      decoration: const BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [Colors.black54, Colors.transparent],
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          const Spacer(),
+                          IconButton(
+                            icon: const Icon(Icons.settings, color: Colors.white),
+                            tooltip: 'Settings',
+                            onPressed: () {
+                              _scheduleHide();
+                              widget.onOpenSettings();
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  // Bottom bar: progress + time + fullscreen.
+                  Align(
+                    alignment: Alignment.bottomCenter,
+                    child: _buildBottomBar(player),
+                  ),
+                ],
+              ),
             ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 

@@ -77,12 +77,16 @@ class VideoStreamInfo {
   final String? audioUrl;
   final String quality;
   final String format;
+  /// Container/file type of the stream, e.g. `mp4` or `webm` — shown next
+  /// to the quality in menus so users know what will actually play.
+  final String container;
 
   VideoStreamInfo({
     required this.url,
     this.audioUrl,
     required this.quality,
     required this.format,
+    this.container = '',
   });
 }
 

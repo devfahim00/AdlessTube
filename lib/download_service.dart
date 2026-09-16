@@ -242,15 +242,38 @@ class DownloadService extends ChangeNotifier {
       }
 
       // ── Video + audio ──
-      // Prefer a single muxed file; otherwise pair the adaptive video with
-      // its audio track and store both paths together.
+      // YouTube caps muxed (progressive) streams at ~360p, so a high
+      // quality request (1080p/4K) must resolve to the adaptive stream
+      // that actually reaches the target and be paired with its audio
+      // track. Muxed is only preferred when it matches the requested
+      // quality just as well (then one file beats two), or when there is
+      // no adaptive stream at all.
+      final adaptive = streams
+          .where((s) => s.format != 'muxed' && (s.audioUrl ?? '').isNotEmpty)
+          .toList();
       final muxed = streams.where((s) => s.format == 'muxed').toList();
+      final adaptivePick = _pick(adaptive, target);
       final muxedPick = _pick(muxed, target);
-      if (muxedPick != null) {
+
+      VideoStreamInfo? pick;
+      if (adaptivePick != null && muxedPick != null) {
+        if (target == null) {
+          pick = adaptivePick; // Auto → the best quality available.
+        } else {
+          final aRank = _rank(adaptivePick.quality);
+          final mRank = _rank(muxedPick.quality);
+          // Muxed wins only on an exact (or better) quality match.
+          pick = mRank >= aRank ? muxedPick : adaptivePick;
+        }
+      } else {
+        pick = adaptivePick ?? muxedPick;
+      }
+
+      if (pick != null && pick.format == 'muxed') {
         final path =
-            '$dir/${item.videoId}_${muxedPick.quality}_muxed.${_extFor(muxedPick.format, audio: false)}';
+            '$dir/${item.videoId}_${pick.quality}_muxed.${_extFor(pick.format, audio: false)}';
         await _downloadFile(
-          muxedPick.url,
+          pick.url,
           path,
           itemId: item.id,
           onProgress: (received, total) =>
@@ -262,10 +285,7 @@ class DownloadService extends ChangeNotifier {
         return;
       }
 
-      final adaptive = streams
-          .where((s) => s.format != 'muxed' && (s.audioUrl ?? '').isNotEmpty)
-          .toList();
-      final stream = _pick(adaptive, target);
+      final stream = pick;
       if (stream == null) throw StateError('No video stream found.');
       final audioUrl = stream.audioUrl!;
       final videoPath =

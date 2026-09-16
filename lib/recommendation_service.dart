@@ -6,6 +6,7 @@ import 'package:newpipeextractor_dart/newpipeextractor_dart.dart'
 import 'models.dart';
 import 'newpipe_service.dart';
 import 'storage_service.dart';
+import 'topic_miner.dart';
 
 /// One endless source the home feed can pull from.
 ///
@@ -116,66 +117,18 @@ class RecommendationService {
     return sources;
   }
 
-  /// Words that carry no taste signal — filtered from topic mining.
-  static const _stopwords = {
-    // English structure
-    'the', 'a', 'an', 'and', 'or', 'of', 'in', 'on', 'for', 'to', 'with',
-    'is', 'are', 'was', 'were', 'this', 'that', 'it', 'its', 'as', 'at',
-    'by', 'from', 'be', 'been', 'how', 'what', 'why', 'when', 'who', 'you',
-    'your', 'my', 'we', 'our', 'us', 'they', 'them', 'his', 'her', 'she',
-    'he', 'will', 'can', 'do', 'does', 'did', 'has', 'have', 'had', 'not',
-    'but', 'if', 'so', 'than', 'then', 'there', 'here', 'out', 'up', 'down',
-    'about', 'into', 'over', 'after', 'before', 'more', 'most', 'very',
-    'just', 'also', 'like', 'get', 'got', 'all', 'one', 'two', 'no', 'yes',
-    // Bangla structure
-    'এবং', 'এই', 'সেই', 'আমি', 'আমরা', 'তুমি', 'আপনি', 'তার', 'তাদের',
-    'করে', 'করা', 'করব', 'হয়', 'হচ্ছে', 'ছিল', 'থেকে', 'জন্য', 'সাথে',
-    'কিভাবে', 'কেন', 'কোথায়', 'কি', 'না', 'নাই', 'আর', 'ও', 'এখন',
-    'আজ', 'আবার', 'সব', 'সবাই', 'একটি', 'একটা', 'কোনো',
-    // YouTube meta noise
-    'official', 'video', 'videos', 'full', 'song', 'songs', 'music',
-    'latest', 'new', 'best', 'top', 'part', 'episode', 'ep', 'live',
-    'hd', '4k', 'vs', 'feat', 'ft', 'lyrics', 'lyric', 'audio',
-    'trailer', 'teaser', 'shorts', 'short', 'edit', 'edits', 'free',
-    'online', 'watch', 'now', 'today', 'day', 'vlog', 'news', 'mix',
-    'reaction', 'review', 'tutorial', 'highlights', 'clip', 'clips',
-    'bangla', 'english', 'hindi', 'bengali', 'cartoon', 'movie', 'film',
-  };
-
-  /// Mines recurring topic words from watch + save history. Returns search
-  /// queries in taste order; empty when there is not enough history yet.
+  /// Mines recurring topic words from watch + save history via the shared
+  /// [TopicMiner] (also used by the Shorts feed). Returns search queries
+  /// in taste order; empty when there is not enough history yet.
   List<String> _interestTopics(
     StorageService storage,
     List<VideoItem> history,
   ) {
-    final counts = <String, int>{};
-    final titles = <String>[
-      for (final v in history.take(30)) v.title,
-      for (final v in storage.getSavedVideos().take(15)) v.title,
+    final taste = <VideoItem>[
+      ...history.take(30),
+      ...storage.getSavedVideos().take(15),
     ];
-    for (final title in titles) {
-      final words =
-          title.toLowerCase().split(RegExp(r'[^a-z0-9\u0980-\u09FF]+'));
-      final seenInTitle = <String>{};
-      for (final word in words) {
-        if (word.length < 3 || word.length > 18) continue;
-        if (_stopwords.contains(word)) continue;
-        if (int.tryParse(word) != null) continue;
-        // Count a word at most once per title so lists don't dominate.
-        if (!seenInTitle.add(word)) continue;
-        counts[word] = (counts[word] ?? 0) + 1;
-      }
-    }
-
-    final recurring =
-        counts.entries.where((e) => e.value >= 2).toList()
-          ..sort((a, b) => b.value.compareTo(a.value));
-    if (recurring.length >= 3) {
-      return [for (final e in recurring) e.key];
-    }
-    // Light history: fall back to any valid token, shuffled for variety.
-    final pool = counts.keys.toList()..shuffle(_random);
-    return pool;
+    return TopicMiner.mineTopics(taste, random: _random);
   }
 
   /// Discovers channels similar to the subscribed ones (but not subscribed)

@@ -94,6 +94,7 @@ class _ShortsScreenState extends State<ShortsScreen> {
       final shorts = await _service.getShorts(
         region: storage.regionCode,
         subscribedChannels: storage.getSubscribedChannelUrls(),
+        watchHistory: storage.getHistory(),
       );
       if (mounted) setState(() => _shorts = shorts);
     } catch (e) {

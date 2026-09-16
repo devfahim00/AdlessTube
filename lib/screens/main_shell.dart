@@ -1,9 +1,11 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:media_kit_video/media_kit_video.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../models.dart';
 import '../storage_service.dart';
 import '../update_service.dart';
 import '../video_playback_service.dart';
@@ -19,7 +21,9 @@ import 'shorts_screen.dart';
 ///
 /// Pages live in an [IndexedStack] so switching tabs never disposes them —
 /// the Home and Music feeds keep their scroll position and content instead
-/// of auto-refreshing every time the user comes back.
+/// of auto-refreshing every time the user comes back. Tab switches fade
+/// and lift the new page in (disabled from Settings when the user prefers
+/// instant switches).
 class MainShell extends StatefulWidget {
   const MainShell({super.key});
 
@@ -27,9 +31,17 @@ class MainShell extends StatefulWidget {
   State<MainShell> createState() => _MainShellState();
 }
 
-class _MainShellState extends State<MainShell> {
+class _MainShellState extends State<MainShell>
+    with SingleTickerProviderStateMixin {
   int _index = 0;
   bool _checkedForUpdate = false;
+
+  /// Drives the tab-switch transition (fade + slight lift).
+  late final AnimationController _tabTransition = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 260),
+    value: 1.0,
+  );
 
   /// Where the Shorts exit button lands — recomputed every build so service
   /// changes are respected. Priority: Home, then Music, then Library.
@@ -44,6 +56,12 @@ class _MainShellState extends State<MainShell> {
         unawaited(_checkForUpdate(showUpToDate: false));
       });
     }
+  }
+
+  @override
+  void dispose() {
+    _tabTransition.dispose();
+    super.dispose();
   }
 
   Future<void> _checkForUpdate({required bool showUpToDate}) async {
@@ -79,6 +97,18 @@ class _MainShellState extends State<MainShell> {
     );
   }
 
+  void _switchTab(int i) {
+    if (i == _index) return;
+    final animations =
+        context.read<StorageService>().animationsEnabled;
+    setState(() => _index = i);
+    if (animations) {
+      _tabTransition.forward(from: 0.0);
+    } else {
+      _tabTransition.value = 1.0;
+    }
+  }
+
   /// Build the list of visible tabs based on enabled services.
   List<_NavItem> _buildNavItems(StorageService storage) {
     final items = <_NavItem>[];
@@ -99,7 +129,7 @@ class _MainShellState extends State<MainShell> {
         'Shorts',
         ShortsScreen(
           active: _index == shortsIndex,
-          onExit: () => setState(() => _index = _shortsExitIndex),
+          onExit: () => _switchTab(_shortsExitIndex),
         ),
       ));
     }
@@ -146,19 +176,33 @@ class _MainShellState extends State<MainShell> {
     // The Shorts tab is immersive full-screen — navbar & mini player hide.
     final onShorts = navItems[_index].label == 'Shorts';
 
+    // Tab transition: quick fade + upward settle of the incoming page.
+    final tabAnimation = CurvedAnimation(
+      parent: _tabTransition,
+      curve: Curves.easeOutCubic,
+    );
+
     return Scaffold(
       body: Stack(
         children: [
           Positioned.fill(
-            child: IndexedStack(
-              index: _index,
-              children: [
-                for (var i = 0; i < navItems.length; i++)
-                  _LazyTab(
-                    active: i == _index,
-                    builder: (_) => navItems[i].page,
-                  ),
-              ],
+            child: FadeTransition(
+              opacity: tabAnimation,
+              child: ScaleTransition(
+                alignment: Alignment.topCenter,
+                scale: Tween<double>(begin: 0.985, end: 1.0)
+                    .animate(tabAnimation),
+                child: IndexedStack(
+                  index: _index,
+                  children: [
+                    for (var i = 0; i < navItems.length; i++)
+                      _LazyTab(
+                        active: i == _index,
+                        builder: (_) => navItems[i].page,
+                      ),
+                  ],
+                ),
+              ),
             ),
           ),
           Positioned(
@@ -175,13 +219,15 @@ class _MainShellState extends State<MainShell> {
                   child: _PillNavBar(
                     items: navItems,
                     currentIndex: _index,
-                    onTap: (i) => setState(() => _index = i),
+                    onTap: _switchTab,
                   ),
                 ),
               ),
             ),
           ),
           // Floating mini player — bottom right, above the pill navbar.
+          // Slides up + fades in when a video is minimized into it and
+          // slides away when closed.
           Positioned(
             right: 12,
             bottom: 92,
@@ -206,15 +252,76 @@ class _MainShellState extends State<MainShell> {
 /// ═══════════════════════ MINI PLAYER ═══════════════════════
 ///
 /// A video closed with the back gesture keeps playing here — YouTube
-/// style. Tapping the card reopens the full player page.
-class _MiniPlayer extends StatelessWidget {
+/// style. The live video plays inside the card (not just a thumbnail),
+/// and tapping the card reopens the full player page. The card slides
+/// up + fades in when a video is minimized into it and slides away
+/// when closed (instant when animations are off).
+class _MiniPlayer extends StatefulWidget {
   const _MiniPlayer();
+
+  @override
+  State<_MiniPlayer> createState() => _MiniPlayerState();
+}
+
+class _MiniPlayerState extends State<_MiniPlayer>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _anim = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 240),
+    value: 0.0,
+  );
+
+  /// Card content — kept alive while the close animation plays out.
+  VideoItem? _video;
+  bool _open = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _anim.addStatusListener((status) {
+      if (status == AnimationStatus.dismissed && mounted && !_open) {
+        // Exit animation finished — collapse the card.
+        setState(() => _video = null);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _anim.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final vps = context.watch<VideoPlaybackService>();
-    final video = vps.currentVideo;
-    if (!vps.miniVisible || video == null) {
+    final animations =
+        context.select<StorageService, bool>((s) => s.animationsEnabled);
+    final target = vps.miniVisible && vps.currentVideo != null;
+
+    if (target != _open) {
+      _open = target;
+      if (target) {
+        _video = vps.currentVideo;
+        if (animations) {
+          _anim.forward(from: 0.0);
+        } else {
+          _anim.value = 1.0;
+        }
+      } else {
+        if (animations) {
+          _anim.reverse();
+        } else {
+          _anim.value = 0.0;
+          _video = null;
+        }
+      }
+    } else if (target) {
+      _video = vps.currentVideo;
+    }
+
+    final video = _video;
+    if (video == null) {
       return const SizedBox.shrink();
     }
 
@@ -224,133 +331,139 @@ class _MiniPlayer extends StatelessWidget {
             .clamp(0.0, 1.0)
         : 0.0;
 
-    return Material(
-      color: theme.colorScheme.surfaceContainerHighest,
-      elevation: 8,
-      shadowColor: Colors.black54,
-      borderRadius: BorderRadius.circular(14),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(14),
-        onTap: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => PlayerScreen(
-                video: video,
-                download: vps.currentDownload,
-              ),
-            ),
-          );
-        },
-        child: SizedBox(
-          width: 320,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(8, 8, 4, 8),
-                child: Row(
-                  children: [
-                    // Thumbnail
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: SizedBox(
-                        width: 96,
-                        height: 54,
-                        child: video.thumbnailUrl.isEmpty
-                            ? Container(
-                                color: Colors.black,
-                                child: const Icon(Icons.videocam,
-                                    color: Colors.white70),
-                              )
-                            : VideoThumbnail(
-                                videoId: video.id,
-                                fallbackUrl: video.thumbnailUrl,
-                                width: 96,
-                                height: 54,
-                                placeholder: Container(
-                                  width: 96,
-                                  height: 54,
-                                  color: Colors.black,
-                                ),
-                                errorWidget: Container(
-                                  width: 96,
-                                  height: 54,
-                                  color: Colors.black,
-                                  child: const Icon(Icons.videocam,
-                                      color: Colors.white70),
+    final curved = CurvedAnimation(
+      parent: _anim,
+      curve: Curves.easeOutCubic,
+      reverseCurve: Curves.easeInCubic,
+    );
+
+    return FadeTransition(
+      opacity: curved,
+      child: SlideTransition(
+        position: Tween<Offset>(
+          begin: const Offset(0, 0.35),
+          end: Offset.zero,
+        ).animate(curved),
+        child: Material(
+          color: theme.colorScheme.surfaceContainerHighest,
+          elevation: 8,
+          shadowColor: Colors.black54,
+          borderRadius: BorderRadius.circular(14),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(14),
+            onTap: _open
+                ? () {
+                    Navigator.push(
+                      context,
+                      pushPlayerRoute(
+                        PlayerScreen(
+                          video: vps.currentVideo ?? video,
+                          download: vps.currentDownload,
+                        ),
+                        animationsEnabled: animations,
+                      ),
+                    );
+                  }
+                : null,
+            child: SizedBox(
+              width: 320,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(8, 8, 4, 8),
+                    child: Row(
+                      children: [
+                        // The live video itself — same controller, keeps
+                        // playing while minimized (like the YouTube app).
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: SizedBox(
+                            width: 96,
+                            height: 54,
+                            child: vps.hasActiveVideo
+                                ? Video(
+                                    controller: vps.controller,
+                                    fit: BoxFit.cover,
+                                    controls: NoVideoControls,
+                                  )
+                                : Container(
+                                    color: Colors.black,
+                                    child: const Icon(Icons.videocam,
+                                        color: Colors.white70),
+                                  ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        // Title + channel
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                video.title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
                                 ),
                               ),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    // Title + channel
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            video.title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                            ),
+                              const SizedBox(height: 2),
+                              Text(
+                                video.uploader,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 11.5,
+                                  color: theme.colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ],
                           ),
-                          const SizedBox(height: 2),
-                          Text(
-                            video.uploader,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 11.5,
-                              color: theme.colorScheme.onSurfaceVariant,
-                            ),
+                        ),
+                        // Play / pause
+                        IconButton(
+                          visualDensity: VisualDensity.compact,
+                          iconSize: 22,
+                          onPressed: () => vps.togglePlayPause(),
+                          icon: Icon(
+                            vps.isPlaying
+                                ? Icons.pause_circle_filled
+                                : Icons.play_circle_filled,
+                            color: theme.colorScheme.primary,
                           ),
-                        ],
-                      ),
+                        ),
+                        // Close
+                        IconButton(
+                          visualDensity: VisualDensity.compact,
+                          iconSize: 20,
+                          onPressed: () => vps.close(),
+                          icon: Icon(
+                            Icons.close,
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
                     ),
-                    // Play / pause
-                    IconButton(
-                      visualDensity: VisualDensity.compact,
-                      iconSize: 22,
-                      onPressed: () => vps.togglePlayPause(),
-                      icon: Icon(
-                        vps.isPlaying
-                            ? Icons.pause_circle_filled
-                            : Icons.play_circle_filled,
-                        color: theme.colorScheme.primary,
-                      ),
-                    ),
-                    // Close
-                    IconButton(
-                      visualDensity: VisualDensity.compact,
-                      iconSize: 20,
-                      onPressed: () => vps.close(),
-                      icon: Icon(
-                        Icons.close,
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              // Thin progress bar
-              ClipRRect(
-                borderRadius: const BorderRadius.vertical(
-                  bottom: Radius.circular(14),
-                ),
-                child: LinearProgressIndicator(
-                  value: progress,
-                  minHeight: 3,
-                  backgroundColor: theme.colorScheme.surfaceContainerHigh,
-                  valueColor: AlwaysStoppedAnimation(
-                    theme.colorScheme.primary,
                   ),
-                ),
+                  // Thin progress bar
+                  ClipRRect(
+                    borderRadius: const BorderRadius.vertical(
+                      bottom: Radius.circular(14),
+                    ),
+                    child: LinearProgressIndicator(
+                      value: progress,
+                      minHeight: 3,
+                      backgroundColor: theme.colorScheme.surfaceContainerHigh,
+                      valueColor: AlwaysStoppedAnimation(
+                        theme.colorScheme.primary,
+                      ),
+                    ),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
         ),
       ),
@@ -414,6 +527,8 @@ class _PillNavBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
+    final animations = context
+        .select<StorageService, bool>((s) => s.animationsEnabled);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
       decoration: BoxDecoration(
@@ -437,7 +552,8 @@ class _PillNavBar extends StatelessWidget {
               onTap: () => onTap(i),
               behavior: HitTestBehavior.opaque,
               child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
+                duration:
+                    animations ? const Duration(milliseconds: 200) : Duration.zero,
                 padding: const EdgeInsets.symmetric(vertical: 10),
                 decoration: BoxDecoration(
                   color: selected
@@ -448,12 +564,24 @@ class _PillNavBar extends StatelessWidget {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Icon(
-                      selected ? item.filled : item.outlined,
-                      color: selected
-                          ? theme.colorScheme.primary
-                          : theme.colorScheme.onSurfaceVariant,
-                      size: 22,
+                    AnimatedSwitcher(
+                      duration:
+                          animations ? const Duration(milliseconds: 180) : Duration.zero,
+                      transitionBuilder: (child, anim) => ScaleTransition(
+                        scale: anim,
+                        child: FadeTransition(
+                          opacity: anim,
+                          child: child,
+                        ),
+                      ),
+                      child: Icon(
+                        selected ? item.filled : item.outlined,
+                        key: ValueKey('${item.label}_$selected'),
+                        color: selected
+                            ? theme.colorScheme.primary
+                            : theme.colorScheme.onSurfaceVariant,
+                        size: 22,
+                      ),
                     ),
                   ],
                 ),

@@ -158,11 +158,15 @@ class _ChannelScreenState extends State<ChannelScreen>
               if (mounted) {
                 Navigator.push(
                   context,
-                  MaterialPageRoute(
-                    builder: (_) => tab == 'shorts'
-                        ? ShortsScreen(shorts: items, initialIndex: i)
-                        : PlayerScreen(video: video),
-                  ),
+                  tab == 'shorts'
+                      ? MaterialPageRoute(
+                          builder: (_) => ShortsScreen(
+                              shorts: items, initialIndex: i),
+                        )
+                      : pushPlayerRoute(
+                          PlayerScreen(video: video),
+                          animationsEnabled: storage.animationsEnabled,
+                        ),
                 );
               }
             },

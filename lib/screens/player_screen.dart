@@ -84,7 +84,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (!mounted) return;
     Navigator.pushReplacement(
       context,
-      MaterialPageRoute(builder: (_) => PlayerScreen(video: v)),
+      pushPlayerRoute(
+        PlayerScreen(video: v),
+        animationsEnabled: storage.animationsEnabled,
+      ),
     );
   }
 
@@ -113,6 +116,17 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _exitFullscreen();
     } else {
       _enterFullscreen();
+    }
+  }
+
+  /// Swipe down on the video: in fullscreen it exits fullscreen, inline
+  /// it shrinks the video into the mini player — exactly like the
+  /// official YouTube app (there is no back button anymore).
+  void _onSwipeDown() {
+    if (_isFullscreen) {
+      _exitFullscreen();
+    } else {
+      _minimizeAndLeave();
     }
   }
 
@@ -312,6 +326,19 @@ class _PlayerScreenState extends State<PlayerScreen> {
     );
   }
 
+  /// Label shown for a stream in the quality menu: the resolution plus
+  /// the container type that will actually play (mp4 / webm), e.g.
+  /// `1080p (adaptive • webm)` or `360p (mp4)`.
+  String _qualityLabel(VideoStreamInfo stream) {
+    final container = stream.container.isEmpty
+        ? (stream.format == 'muxed' ? 'mp4' : stream.format)
+        : stream.container;
+    final adaptive = stream.format == 'muxed' ? '' : ' adaptive •';
+    return '${stream.quality} ($adaptive $container)'
+        .replaceAll('  ', ' ')
+        .replaceAll('( ', '(');
+  }
+
   Widget _qualityRow(
       VideoStreamInfo stream, bool isDark, BuildContext sheetContext) {
     final isCurrent = _vps.currentStream != null &&
@@ -327,7 +354,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         color: isCurrent ? Colors.red : null,
       ),
       title: Text(
-        '${stream.quality}${stream.format == 'muxed' ? '' : ' (adaptive)'}',
+        _qualityLabel(stream),
         style: TextStyle(color: isDark ? Colors.white : null),
       ),
       onTap: () {
@@ -384,11 +411,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   Navigator.pop(sheetContext);
                   Navigator.pushReplacement(
                     context,
-                    MaterialPageRoute(
-                      builder: (_) => PlayerScreen(
+                    pushPlayerRoute(
+                      PlayerScreen(
                         video: widget.video,
                         download: completed,
                       ),
+                      animationsEnabled: context
+                          .read<StorageService>()
+                          .animationsEnabled,
                     ),
                   );
                 },
@@ -603,15 +633,35 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final vpsError =
         context.select<VideoPlaybackService, String?>((v) => v.error);
 
+    final animationsEnabled =
+        context.select<StorageService, bool>((s) => s.animationsEnabled);
+
+    Widget buildControls() => YouTubeVideoControls(
+          player: _vps.player,
+          isFullscreen: _isFullscreen,
+          onToggleFullscreen: _toggleFullscreen,
+          onOpenSettings: _openSettingsSheet,
+          onSwipeDown: _onSwipeDown,
+          animationsEnabled: animationsEnabled,
+        );
+
     final video = Video(
       controller: _vps.controller,
-      controls: (state) => YouTubeVideoControls(
-        player: _vps.player,
-        isFullscreen: _isFullscreen,
-        onBack: _isFullscreen ? _exitFullscreen : _minimizeAndLeave,
-        onToggleFullscreen: _toggleFullscreen,
-        onOpenSettings: _openSettingsSheet,
-      ),
+      controls: (state) => buildControls(),
+    );
+
+    // Audio-only mode: keep the audio playing but replace the video
+    // surface with a placeholder (controls stay usable).
+    final audioOnly =
+        context.select<VideoPlaybackService, bool>((v) => v.audioOnlyMode);
+    final videoArea = Stack(
+      fit: StackFit.expand,
+      children: [
+        if (audioOnly) const _AudioOnlyPlaceholder() else video,
+        // The placeholder keeps the same gesture surface so tap-to-pause,
+        // the paused badge and swipe-to-minimize all still work.
+        if (audioOnly) buildControls(),
+      ],
     );
 
     if (_isFullscreen) {
@@ -623,7 +673,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         child: Scaffold(
           backgroundColor: Colors.black,
           body: Center(
-            child: AspectRatio(aspectRatio: 16 / 9, child: video),
+            child: AspectRatio(aspectRatio: 16 / 9, child: videoArea),
           ),
         ),
       );
@@ -635,23 +685,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         children: [
           SafeArea(
             bottom: false,
-            child: AspectRatio(
-              aspectRatio: 16 / 9,
-              child: Stack(
-                children: [
-                  video,
-                  // Back button above the video area.
-                  Positioned(
-                    top: 4,
-                    left: 4,
-                    child: IconButton(
-                      icon: const Icon(Icons.arrow_back, color: Colors.white),
-                      onPressed: _minimizeAndLeave,
-                    ),
-                  ),
-                ],
-              ),
-            ),
+            child: AspectRatio(aspectRatio: 16 / 9, child: videoArea),
           ),
           Expanded(child: _buildBody(storage, saved, vpsLoading, vpsError)),
         ],
@@ -663,7 +697,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
             pipChild: ColoredBox(
               color: Colors.black,
               child: Center(
-                child: AspectRatio(aspectRatio: 16 / 9, child: video),
+                child: AspectRatio(
+                  aspectRatio: 16 / 9,
+                  // PiP mirrors the page: placeholder while audio-only.
+                  child: audioOnly ? const _AudioOnlyPlaceholder() : video,
+                ),
               ),
             ),
             child: page,
@@ -756,6 +794,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
               _DownloadActionPill(
                 video: video,
                 onTap: _openDownloadSheet,
+              ),
+              // Audio-only mode: background listening without PiP — the
+              // video surface is replaced by a placeholder while on.
+              _actionPill(
+                icon: _vps.audioOnlyMode
+                    ? Icons.headphones
+                    : Icons.headphones_outlined,
+                label: _vps.audioOnlyMode ? 'Audio on' : 'Audio only',
+                highlight: _vps.audioOnlyMode,
+                onTap: _vps.toggleAudioOnlyMode,
               ),
               if (Platform.isAndroid)
                 _actionPill(
@@ -977,6 +1025,80 @@ class _AudioLanguagePill extends StatelessWidget {
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Placeholder shown over the video area while audio-only mode is on:
+/// audio keeps playing, the video is hidden.
+class _AudioOnlyPlaceholder extends StatefulWidget {
+  const _AudioOnlyPlaceholder();
+
+  @override
+  State<_AudioOnlyPlaceholder> createState() => _AudioOnlyPlaceholderState();
+}
+
+class _AudioOnlyPlaceholderState extends State<_AudioOnlyPlaceholder>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulse = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1400),
+  )..repeat(reverse: true);
+
+  @override
+  void dispose() {
+    _pulse.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: Colors.black,
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ScaleTransition(
+              scale: Tween<double>(begin: 0.92, end: 1.08)
+                  .animate(CurvedAnimation(parent: _pulse, curve: Curves.easeInOut)),
+              child: Container(
+                padding: const EdgeInsets.all(18),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.red.withValues(alpha: 0.14),
+                  border: Border.all(
+                    color: Colors.red.withValues(alpha: 0.55),
+                    width: 1.5,
+                  ),
+                ),
+                child: const Icon(
+                  Icons.headphones,
+                  color: Colors.red,
+                  size: 40,
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
+            const Text(
+              'Audio only mode',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w600,
+                fontSize: 15,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Video is off — tap "Audio only" to bring it back',
+              style: TextStyle(
+                color: Colors.grey[500],
+                fontSize: 12,
+              ),
+            ),
+          ],
         ),
       ),
     );
