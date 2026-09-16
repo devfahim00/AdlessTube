@@ -17,6 +17,7 @@ import '../storage_service.dart';
 import '../video_playback_service.dart';
 import '../widgets.dart';
 import 'channel_screen.dart';
+import 'music_player_screen.dart';
 import 'video_controls.dart';
 
 /// ═══════════════════════ PLAYER ═══════════════════════
@@ -47,6 +48,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   bool _isFullscreen = false;
   List<VideoItem> _related = [];
   bool _loadingRelated = false;
+  bool _switchingToAudio = false;
 
   // ── Channel info (subscriber count under the channel name) ──
   int? _subscriberCount;
@@ -111,6 +113,41 @@ class _PlayerScreenState extends State<PlayerScreen> {
         animationsEnabled: storage.animationsEnabled,
       ),
     );
+  }
+
+  /// Audio-only handoff: capture the current spot, hand playback to
+  /// the background music service (notification controls included)
+  /// and continue in the Now Playing screen — exactly like the Music
+  /// tab. The video's resume position keeps syncing while the audio
+  /// plays, so closing the app or reopening the video never loses the
+  /// spot.
+  Future<void> _startAudioOnly() async {
+    if (_switchingToAudio) return;
+    _switchingToAudio = true;
+    try {
+      final started = await _vps.switchToAudioOnly();
+      if (!mounted) return;
+      if (!started) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content:
+                Text('Audio mode is unavailable — the video keeps playing'),
+          ),
+        );
+        return;
+      }
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (_) => MusicPlayerScreen(
+            song: widget.video,
+            autoPlay: false,
+          ),
+        ),
+      );
+    } finally {
+      _switchingToAudio = false;
+    }
   }
 
   // ─────────── Fullscreen ───────────
@@ -729,20 +766,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
       controls: (state) => buildControls(),
     );
 
-    // Audio-only mode: keep the audio playing but replace the video
-    // surface with a placeholder (controls stay usable).
-    final audioOnly =
-        context.select<VideoPlaybackService, bool>((v) => v.audioOnlyMode);
-    final videoArea = Stack(
-      fit: StackFit.expand,
-      children: [
-        if (audioOnly) const _AudioOnlyPlaceholder() else video,
-        // The placeholder keeps the same gesture surface so tap-to-pause,
-        // the paused badge and swipe-to-minimize all still work.
-        if (audioOnly) buildControls(),
-      ],
-    );
-
     if (_isFullscreen) {
       return PopScope(
         canPop: false,
@@ -755,7 +778,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
           // edge to edge and the selected fit mode decides how the picture
           // scales inside it (no more empty side bars from a forced 16:9
           // box on modern tall screens).
-          body: videoArea,
+          body: video,
         ),
       );
     }
@@ -770,7 +793,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
             bottom: false,
             child: ColoredBox(
               color: Colors.black,
-              child: AspectRatio(aspectRatio: 16 / 9, child: videoArea),
+              child: AspectRatio(aspectRatio: 16 / 9, child: video),
             ),
           ),
           Expanded(child: _buildBody(storage, saved, vpsLoading, vpsError)),
@@ -785,10 +808,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
               child: Center(
                 child: AspectRatio(
                   aspectRatio: 16 / 9,
-                  // PiP mirrors the page: placeholder while audio-only.
                   // Always letterboxed (contain) — crop/stretch would
                   // distort the tiny PiP window.
-                  child: audioOnly ? const _AudioOnlyPlaceholder() : pipVideo,
+                  child: pipVideo,
                 ),
               ),
             ),
@@ -903,16 +925,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 video: video,
                 onTap: _openDownloadSheet,
               ),
-              // Audio-only mode: background listening without PiP — the
-              // video surface is replaced by a placeholder while on.
-              _actionPill(
-                icon: _vps.audioOnlyMode
-                    ? Icons.headphones
-                    : Icons.headphones_outlined,
-                label: _vps.audioOnlyMode ? 'Audio on' : 'Audio only',
-                highlight: _vps.audioOnlyMode,
-                onTap: _vps.toggleAudioOnlyMode,
-              ),
+              // Audio-only: hand playback to the background music
+              // service and continue in Now Playing — notification
+              // controls included. Live streams keep no timeline, so
+              // they stay in the video player.
+              if (!video.isLive)
+                _actionPill(
+                  icon: Icons.headphones_outlined,
+                  label: 'Audio only',
+                  onTap: _startAudioOnly,
+                ),
               if (Platform.isAndroid)
                 _actionPill(
                   icon: Icons.picture_in_picture_alt,
@@ -1148,81 +1170,6 @@ class _AudioLanguagePill extends StatelessWidget {
               ],
             ),
           ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Placeholder shown over the video area while audio-only mode is on:
-/// audio keeps playing, the video is hidden.
-class _AudioOnlyPlaceholder extends StatefulWidget {
-  const _AudioOnlyPlaceholder();
-
-  @override
-  State<_AudioOnlyPlaceholder> createState() => _AudioOnlyPlaceholderState();
-}
-
-class _AudioOnlyPlaceholderState extends State<_AudioOnlyPlaceholder>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _pulse = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 1400),
-  )..repeat(reverse: true);
-
-  @override
-  void dispose() {
-    _pulse.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final accent = Theme.of(context).colorScheme.primary;
-    return Container(
-      color: Colors.black,
-      child: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ScaleTransition(
-              scale: Tween<double>(begin: 0.92, end: 1.08)
-                  .animate(CurvedAnimation(parent: _pulse, curve: Curves.easeInOut)),
-              child: Container(
-                padding: const EdgeInsets.all(18),
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: accent.withValues(alpha: 0.14),
-                  border: Border.all(
-                    color: accent.withValues(alpha: 0.55),
-                    width: 1.5,
-                  ),
-                ),
-                child: Icon(
-                  Icons.headphones,
-                  color: accent,
-                  size: 40,
-                ),
-              ),
-            ),
-            const SizedBox(height: 14),
-            const Text(
-              'Audio only mode',
-              style: TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w600,
-                fontSize: 15,
-              ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              'Video is off — tap "Audio only" to bring it back',
-              style: TextStyle(
-                color: Colors.grey[500],
-                fontSize: 12,
-              ),
-            ),
-          ],
         ),
       ),
     );

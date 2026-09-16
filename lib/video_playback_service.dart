@@ -35,7 +35,6 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
   StreamSubscription? _durationSub;
   Timer? _notifyThrottle;
   Duration _lastSavedPosition = Duration.zero;
-
   /// The last position the player itself reported (stream truth, never
   /// overridden by hand) — used to verify that a resume actually stuck.
   Duration? _rawPosition;
@@ -53,11 +52,6 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
   List<AudioTrackOption> audioTracks = [];
   AudioTrackOption? currentAudioTrack;
   double playbackSpeed = 1.0;
-
-  /// Audio-only mode: playback keeps running but the video surface is
-  /// hidden (the player page shows a placeholder instead). Lets users
-  /// listen in the background feel without PiP.
-  bool audioOnlyMode = false;
 
   bool loading = true;
   String? error;
@@ -140,7 +134,6 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
     audioTracks = [];
     currentAudioTrack = null;
     playbackSpeed = 1.0;
-    audioOnlyMode = false; // audio-only is a per-video choice
     loading = true;
     error = null;
     miniVisible = false;
@@ -148,8 +141,11 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
     duration = Duration.zero;
     notifyListeners();
 
-    // Only one audio surface: video playback pauses music.
-    unawaited(_music.stop());
+    // Only one audio surface: opening a video stops music first. The
+    // await matters — a handed-off audio's final position sync must
+    // land before the resume spot is read below, so reopening a video
+    // whose audio is playing continues from the audio's live spot.
+    await _music.stop();
 
     _ensurePlayer();
     try {
@@ -250,7 +246,6 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
     error = null;
     loading = false;
     isPlaying = false;
-    audioOnlyMode = false;
     miniVisible = false;
     position = Duration.zero;
     duration = Duration.zero;
@@ -259,15 +254,79 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
 
   // ─────────── Controls ───────────
 
-  /// Toggles audio-only mode for the current video. Audio keeps playing;
-  /// only the video surface is hidden while the mode is on.
-  void toggleAudioOnlyMode() {
-    if (currentVideo == null) return;
-    audioOnlyMode = !audioOnlyMode;
-    // Entering listening mode is a natural checkpoint — the user is
-    // likely to background or close the app from here, so pin the spot.
-    if (audioOnlyMode) _savePlaybackState();
-    notifyListeners();
+  /// Audio-only handoff: captures the current spot, pauses the video
+  /// and continues playback through the music pipeline instead —
+  /// background audio with notification controls, exactly like the
+  /// Music tab's Now Playing. The music service keeps the video's
+  /// resume position in sync while the audio plays, so closing the
+  /// app or reopening the video lands on the exact spot the audio
+  /// reached. Returns false when the handoff failed (the video then
+  /// resumes exactly where it was).
+  Future<bool> switchToAudioOnly() async {
+    final video = currentVideo;
+    if (video == null || video.isLive) return false;
+
+    final startAt = position;
+    final download = currentDownload;
+    final stream = currentStream;
+    // The audio the video was actually playing — keeps a chosen dub
+    // and skips a fresh stream extraction.
+    final audioUrl = currentAudioTrack?.url ?? stream?.audioUrl;
+    final quality = stream?.quality;
+    final format = stream?.format;
+
+    // Downloads continue from the local files: the downloaded audio
+    // track first, the muxed video file otherwise (it carries the
+    // audio just as well).
+    String? localAudio;
+    if (download != null) {
+      final audioPath = download.audioPath;
+      if (audioPath != null && File(audioPath).existsSync()) {
+        localAudio = audioPath;
+      } else {
+        final videoPath = download.videoPath;
+        if (videoPath != null && File(videoPath).existsSync()) {
+          localAudio = videoPath;
+        }
+      }
+    }
+
+    // Pause first: no doubled audio while the music stream loads,
+    // and a failed handoff can simply resume the video right here.
+    try {
+      await _player?.pause();
+    } catch (_) {}
+
+    // Pin the video's spot before the handoff.
+    _savePlaybackState(startAt);
+
+    final started = await _music.play(
+      video,
+      // A fresh single-song queue: a stale music queue must never
+      // leak into the notification's next/previous for this audio,
+      // and setQueue also clears a leftover radio flag.
+      queue: [video],
+      localAudioPath: localAudio,
+      audioUrl: localAudio == null ? audioUrl : null,
+      startAt: startAt,
+      fromVideo: true,
+      videoQuality: quality,
+      videoFormat: format,
+    );
+    if (!started) {
+      // The music pipeline refused — bring the video back exactly
+      // where it was.
+      try {
+        await _player?.play();
+      } catch (_) {}
+      return false;
+    }
+
+    // Music starting already closes the video (onPlaybackStarting in
+    // main.dart); make sure everything is torn down even if that
+    // callback lagged behind.
+    if (currentVideo != null) await close();
+    return true;
   }
 
   Future<void> togglePlayPause() async {

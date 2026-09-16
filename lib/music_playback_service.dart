@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:audio_service/audio_service.dart';
-import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:just_audio/just_audio.dart';
 
 import 'models.dart';
@@ -37,6 +37,11 @@ class _AdlessAudioHandler extends BaseAudioHandler
   Stream<Duration> get positionStream => _player.positionStream;
   Stream<Duration?> get durationStream => _player.durationStream;
   Duration get duration => _player.duration ?? Duration.zero;
+  Duration get position => _player.position;
+
+  /// Whether the player still holds a loaded source — false after
+  /// stop(), where a bare play() would silently do nothing.
+  bool get hasSource => _player.processingState != ProcessingState.idle;
 
   Future<void> load(MediaItem item, Uri source) async {
     mediaItem.add(item);
@@ -139,7 +144,7 @@ enum QueueRepeat {
 }
 
 /// Keeps Music playback in an Android media service with notification controls.
-class MusicPlaybackService extends ChangeNotifier {
+class MusicPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
   final NewPipeService _service = NewPipeService();
   final StorageService _storage;
   _AdlessAudioHandler? _handler;
@@ -155,7 +160,22 @@ class MusicPlaybackService extends ChangeNotifier {
   QueueRepeat _repeat = QueueRepeat.off;
   bool _radio = false;
 
-  MusicPlaybackService(this._storage);
+  // ─────────── Video handoff: resume-spot sync ───────────
+  //
+  // When a video is handed off to audio-only mode, its saved resume
+  // position keeps following the music playback: close the app
+  // mid-song and reopening that video (or just the app) lands on the
+  // exact spot the audio reached — never back at the handoff spot.
+  String? _syncVideoId;
+  String? _syncQuality;
+  String? _syncFormat;
+  Duration _lastSyncedPosition = Duration.zero;
+  Duration _lastSyncedDuration = Duration.zero;
+  Timer? _syncTimer;
+
+  MusicPlaybackService(this._storage) {
+    WidgetsBinding.instance.addObserver(this);
+  }
 
   /// Fired whenever music (re)starts playing — from the app or from the
   /// notification controls. The video mini player closes in response so
@@ -188,7 +208,13 @@ class MusicPlaybackService extends ChangeNotifier {
       handler.onPrevious = previous;
       handler.onPlayStarting = () => onPlaybackStarting?.call();
       handler.playbackState.listen((state) {
+        final wasPlaying = _playing;
         _playing = state.playing;
+        // Pausing a handed-off audio pins the video's spot right
+        // away — the periodic sync only saves while playing.
+        if (wasPlaying && !_playing && _syncVideoId != null) {
+          _pinSyncedSpot();
+        }
         if (state.processingState == AudioProcessingState.completed &&
             (_storage.musicAutoplay || _radio) &&
             !_handlingCompletion) {
@@ -258,10 +284,23 @@ class MusicPlaybackService extends ChangeNotifier {
     _radio = radio;
   }
 
-  Future<void> play(
+  /// Plays [nextSong] through the background audio service.
+  ///
+  /// The extra parameters serve the audio-only handoff from the
+  /// video player: [audioUrl] reuses the exact audio stream the
+  /// video was playing (keeps a chosen dub, skips a re-extraction),
+  /// [startAt] continues from the video's current spot, and
+  /// [fromVideo] keeps the video's resume position in sync while the
+  /// audio plays. Returns false when the audio could not start.
+  Future<bool> play(
     VideoItem nextSong, {
     List<VideoItem>? queue,
     String? localAudioPath,
+    String? audioUrl,
+    Duration? startAt,
+    bool fromVideo = false,
+    String? videoQuality,
+    String? videoFormat,
   }) async {
     if (queue != null) setQueue(queue, nextSong);
     _loading = true;
@@ -270,18 +309,36 @@ class MusicPlaybackService extends ChangeNotifier {
     _song = nextSong;
     notifyListeners();
     try {
+      // A new song ends any previous video handoff's sync — pin that
+      // video's spot first so its progress is never lost.
+      await _stopVideoResumeSync();
       final handler = await _getHandler();
 
-      // If same song is already loaded, just resume
+      // If the same song is still loaded, just resume (a stopped
+      // player holds no source anymore — that needs a full reload).
       final currentItem = handler.mediaItem.valueOrNull;
-      if (currentItem != null && currentItem.id == nextSong.id) {
+      if (currentItem != null &&
+          currentItem.id == nextSong.id &&
+          handler.hasSource) {
+        if (startAt != null && startAt > const Duration(seconds: 1)) {
+          await handler.seek(startAt);
+        }
         await handler.play();
-        return;
+        if (fromVideo) {
+          _startVideoResumeSync(
+            nextSong.id,
+            quality: videoQuality,
+            format: videoFormat,
+          );
+        }
+        return true;
       }
 
       final Uri source;
       if (localAudioPath != null) {
         source = Uri.file(localAudioPath);
+      } else if (audioUrl != null && audioUrl.isNotEmpty) {
+        source = Uri.parse(audioUrl);
       } else {
         final audio = await _service.getBestAudioStream(nextSong.url);
         if (audio == null) {
@@ -300,10 +357,22 @@ class MusicPlaybackService extends ChangeNotifier {
         ),
         source,
       );
+      if (startAt != null && startAt > const Duration(seconds: 1)) {
+        await handler.seek(startAt);
+      }
       await handler.play();
+      if (fromVideo) {
+        _startVideoResumeSync(
+          nextSong.id,
+          quality: videoQuality,
+          format: videoFormat,
+        );
+      }
+      return true;
     } catch (e) {
       _error = e.toString();
       _song = null;
+      return false;
     } finally {
       _loading = false;
       notifyListeners();
@@ -368,10 +437,110 @@ class MusicPlaybackService extends ChangeNotifier {
   }
 
   Future<void> stop() async {
+    await _stopVideoResumeSync();
     final handler = _handler;
     if (handler != null) await handler.stop();
     _song = null;
     _error = null;
     notifyListeners();
+  }
+
+  // ─────────── Video handoff: resume-spot sync ───────────
+
+  /// While a handed-off video plays as audio, checkpoint its resume
+  /// spot every few seconds — the same cadence the video player
+  /// itself uses. A stopped or still-loading player reports zero and
+  /// must never wipe a good resume spot.
+  void _startVideoResumeSync(
+    String videoId, {
+    String? quality,
+    String? format,
+  }) {
+    _syncTimer?.cancel();
+    _syncVideoId = videoId;
+    _syncQuality = quality;
+    _syncFormat = format;
+    _lastSyncedPosition = Duration.zero;
+    _lastSyncedDuration = Duration.zero;
+    _syncTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+      final handler = _handler;
+      final id = _syncVideoId;
+      if (handler == null || id == null || !_playing) return;
+      _pinSyncedSpot();
+    });
+  }
+
+  /// Saves the handed-off video's current spot right now (periodic
+  /// tick, pause). Zero positions from stopped or still-loading
+  /// players are ignored so a good resume spot is never wiped.
+  void _pinSyncedSpot() {
+    final handler = _handler;
+    final id = _syncVideoId;
+    if (handler == null || id == null) return;
+    final pos = handler.position;
+    final dur = handler.duration;
+    if (pos.inMilliseconds <= 0 || dur.inMilliseconds <= 0) return;
+    _lastSyncedPosition = pos;
+    _lastSyncedDuration = dur;
+    unawaited(_storage.savePlaybackState(
+      videoId: id,
+      position: pos,
+      duration: dur,
+      quality: _syncQuality,
+      format: _syncFormat,
+    ));
+  }
+
+  /// Ends the sync. With [save], pins the last known spot one final
+  /// time so stopping, skipping or switching songs never loses the
+  /// video's progress.
+  Future<void> _stopVideoResumeSync({bool save = true}) async {
+    final timer = _syncTimer;
+    _syncTimer = null;
+    timer?.cancel();
+    final id = _syncVideoId;
+    final quality = _syncQuality;
+    final format = _syncFormat;
+    final position = _lastSyncedPosition;
+    final duration = _lastSyncedDuration;
+    _syncVideoId = null;
+    _syncQuality = null;
+    _syncFormat = null;
+    _lastSyncedPosition = Duration.zero;
+    _lastSyncedDuration = Duration.zero;
+    if (id == null || !save) return;
+    if (position.inMilliseconds > 0 && duration.inMilliseconds > 0) {
+      await _storage.savePlaybackState(
+        videoId: id,
+        position: position,
+        duration: duration,
+        quality: quality,
+        format: format,
+      );
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      // The OS can reap the process at any moment after this — pin a
+      // handed-off video's spot and push it to disk before it does.
+      if (_syncVideoId != null) {
+        unawaited(
+          _stopVideoResumeSync().then((_) => _storage.flushPlayback()),
+        );
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _syncTimer?.cancel();
+    unawaited(_stopVideoResumeSync());
+    super.dispose();
   }
 }

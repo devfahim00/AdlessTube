@@ -13,7 +13,12 @@ import '../widgets.dart';
 class MusicPlayerScreen extends StatefulWidget {
   final VideoItem song;
 
-  const MusicPlayerScreen({super.key, required this.song});
+  /// Whether initState should start playback. The audio-only handoff
+  /// from the video player passes false — the audio is already playing
+  /// at the video's exact position when this screen opens.
+  final bool autoPlay;
+
+  const MusicPlayerScreen({super.key, required this.song, this.autoPlay = true});
 
   @override
   State<MusicPlayerScreen> createState() => _MusicPlayerScreenState();
@@ -27,7 +32,9 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen> {
   void initState() {
     super.initState();
     _storage = context.read<StorageService>();
-    unawaited(context.read<MusicPlaybackService>().play(widget.song));
+    if (widget.autoPlay) {
+      unawaited(context.read<MusicPlaybackService>().play(widget.song));
+    }
   }
 
   Future<void> _stopAndLeave() async {
