@@ -1,7 +1,9 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart' show ThemeMode;
 import 'package:hive_flutter/hive_flutter.dart';
+
 import 'models.dart';
+import 'user_profile_service.dart';
 
 class StorageService extends ChangeNotifier {
   static const _historyBox = 'history';
@@ -27,6 +29,11 @@ class StorageService extends ChangeNotifier {
   static const _animationsEnabledKey = 'animations_enabled';
 
   /// Box names included in a backup export / import.
+  ///
+  /// The recommendation-profile boxes (watch events, feedback signals,
+  /// channel affinity, topic weights) are part of every backup, so a
+  /// restored device continues with the same personalized feed instead
+  /// of rebuilding the user profile from zero.
   static const _backupBoxes = [
     _historyBox,
     _likedSongsBox,
@@ -35,6 +42,10 @@ class StorageService extends ChangeNotifier {
     _playbackBox,
     _savedVideosBox,
     _searchHistoryBox,
+    UserProfileService.watchEventsBox,
+    UserProfileService.signalsBox,
+    UserProfileService.channelAffinityBox,
+    UserProfileService.topicProfileBox,
   ];
 
   /// How many recently shown feed videos are remembered — pull-to-refresh
@@ -62,6 +73,13 @@ class StorageService extends ChangeNotifier {
     await Hive.openBox(_savedVideosBox);
     await Hive.openBox(_downloadsBoxName);
     await Hive.openBox(_searchHistoryBox);
+    // Recommendation-profile boxes (opened here so export/import can
+    // always reach them; the profile service opens them too, and Hive
+    // returns the same instance for repeated opens).
+    await Hive.openBox(UserProfileService.watchEventsBox);
+    await Hive.openBox(UserProfileService.signalsBox);
+    await Hive.openBox(UserProfileService.channelAffinityBox);
+    await Hive.openBox(UserProfileService.topicProfileBox);
   }
 
   // ─────────── Region ───────────
@@ -285,7 +303,7 @@ class StorageService extends ChangeNotifier {
     }
     return {
       'app': 'AdlessTube',
-      'backupVersion': 1,
+      'backupVersion': 2,
       'exportedAt': DateTime.now().toIso8601String(),
       'boxes': boxes,
     };

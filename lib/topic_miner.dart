@@ -36,6 +36,24 @@ class TopicMiner {
     'bangla', 'english', 'hindi', 'bengali', 'cartoon', 'movie', 'film',
   };
 
+  /// Tokenizes [title] into taste-signal keywords: lowercased, split on
+  /// non-letters, stopwords / numbers / too-short fragments removed.
+  /// Public so the user-profile engine can score any candidate title
+  /// with exactly the same rules used to mine interests.
+  static List<String> tokenize(String title) {
+    if (title.isEmpty) return const [];
+    final words =
+        title.toLowerCase().split(RegExp(r'[^a-z0-9\u0980-\u09FF]+'));
+    final tokens = <String>[];
+    for (final word in words) {
+      if (word.length < 3 || word.length > 18) continue;
+      if (stopwords.contains(word)) continue;
+      if (int.tryParse(word) != null) continue;
+      tokens.add(word);
+    }
+    return tokens;
+  }
+
   /// Recurring topic keywords from [videos], strongest first.
   ///
   /// A word is only counted once per title so playlists from one channel
@@ -44,16 +62,9 @@ class TopicMiner {
   static List<String> mineTopics(List<VideoItem> videos, {Random? random}) {
     final counts = <String, int>{};
     for (final video in videos) {
-      final title = video.title;
-      if (title.isEmpty) continue;
-      final words =
-          title.toLowerCase().split(RegExp(r'[^a-z0-9\u0980-\u09FF]+'));
-      final seenInTitle = <String>{};
-      for (final word in words) {
-        if (word.length < 3 || word.length > 18) continue;
-        if (stopwords.contains(word)) continue;
-        if (int.tryParse(word) != null) continue;
-        if (!seenInTitle.add(word)) continue;
+      if (video.title.isEmpty) continue;
+      // One occurrence per title: tokenize, then deduplicate.
+      for (final word in tokenize(video.title).toSet()) {
         counts[word] = (counts[word] ?? 0) + 1;
       }
     }

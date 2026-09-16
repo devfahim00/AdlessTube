@@ -48,6 +48,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
   List<VideoItem> _related = [];
   bool _loadingRelated = false;
 
+  // ── Channel info (subscriber count under the channel name) ──
+  int? _subscriberCount;
+  bool _loadingChannelInfo = false;
+
   @override
   void initState() {
     super.initState();
@@ -63,6 +67,23 @@ class _PlayerScreenState extends State<PlayerScreen> {
       unawaited(_vps.open(widget.video, download: widget.download));
     }
     _loadRelated();
+    unawaited(_loadChannelInfo());
+  }
+
+  /// Fetches the channel's subscriber count for the channel row (the
+  /// video's own view count shows under the title instead, exactly
+  /// like the official app).
+  Future<void> _loadChannelInfo() async {
+    final url = widget.video.uploaderUrl;
+    if (url.isEmpty) return;
+    setState(() => _loadingChannelInfo = true);
+    try {
+      final profile = await _service.getChannelProfile(url);
+      if (mounted && profile.subscriberCount != null) {
+        setState(() => _subscriberCount = profile.subscriberCount);
+      }
+    } catch (_) {}
+    if (mounted) setState(() => _loadingChannelInfo = false);
   }
 
   Future<void> _loadRelated({bool force = false}) async {
@@ -314,6 +335,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   Widget _speedChip(double speed, bool isDark) {
+    final theme = Theme.of(context);
     final selected = _vps.playbackSpeed == speed;
     return Padding(
       padding: const EdgeInsets.only(right: 8),
@@ -322,8 +344,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
           decoration: BoxDecoration(
-            color:
-                selected ? Theme.of(context).colorScheme.primary : Colors.white12,
+            color: selected
+                ? theme.colorScheme.primary
+                : theme.colorScheme.surfaceContainerHigh,
             borderRadius: BorderRadius.circular(20),
           ),
           child: Text(
@@ -331,7 +354,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
             style: TextStyle(
               color: selected
                   ? Colors.white
-                  : (isDark ? Colors.white70 : Colors.black54),
+                  : theme.colorScheme.onSurface,
               fontWeight: selected ? FontWeight.bold : FontWeight.normal,
             ),
           ),
@@ -719,12 +742,17 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
 
     final page = Scaffold(
-      backgroundColor: Colors.black,
+      // The page follows the app theme (light / dark / pitch black) —
+      // only the video surface itself stays black, like every player.
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: Column(
         children: [
           SafeArea(
             bottom: false,
-            child: AspectRatio(aspectRatio: 16 / 9, child: videoArea),
+            child: ColoredBox(
+              color: Colors.black,
+              child: AspectRatio(aspectRatio: 16 / 9, child: videoArea),
+            ),
           ),
           Expanded(child: _buildBody(storage, saved, vpsLoading, vpsError)),
         ],
@@ -781,7 +809,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
               Text(
                 vpsError,
                 textAlign: TextAlign.center,
-                style: const TextStyle(color: Colors.white),
+                style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurface),
               ),
               const SizedBox(height: 16),
               ElevatedButton(
@@ -798,18 +827,36 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
 
     final video = widget.video;
+    final theme = Theme.of(context);
     return ListView(
       padding: EdgeInsets.zero,
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-          child: Text(
-            video.title,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 18,
-              fontWeight: FontWeight.w600,
-            ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                video.title,
+                style: TextStyle(
+                  color: theme.colorScheme.onSurface,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              // Video views live directly under the title (YouTube
+              // style); the channel row below shows subscribers.
+              if (video.viewCount != null) ...[
+                const SizedBox(height: 4),
+                Text(
+                  '${formatViews(video.viewCount)} views',
+                  style: TextStyle(
+                    color: theme.colorScheme.onSurfaceVariant,
+                    fontSize: 12.5,
+                  ),
+                ),
+              ],
+            ],
           ),
         ),
         // Action row: Save / Share / Download / PiP
@@ -898,16 +945,27 @@ class _PlayerScreenState extends State<PlayerScreen> {
                             Text(
                               video.uploader,
                               style: TextStyle(
-                                color: Colors.grey[300],
+                                color: theme.colorScheme.onSurface,
                                 fontWeight: FontWeight.w500,
                               ),
                             ),
-                            if (video.viewCount != null) ...[
+                            // Subscriber count under the channel name;
+                            // the video's views moved under the title.
+                            if (_subscriberCount != null) ...[
                               const SizedBox(height: 2),
                               Text(
-                                '${formatViews(video.viewCount)} views',
+                                '${formatViews(_subscriberCount)} subscribers',
                                 style: TextStyle(
-                                  color: Colors.grey[500],
+                                  color: theme.colorScheme.onSurfaceVariant,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ] else if (_loadingChannelInfo) ...[
+                              const SizedBox(height: 2),
+                              Text(
+                                '…',
+                                style: TextStyle(
+                                  color: theme.colorScheme.onSurfaceVariant,
                                   fontSize: 12,
                                 ),
                               ),
@@ -927,13 +985,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
             ],
           ),
         ),
-        const Divider(color: Colors.grey, height: 1),
-        const Padding(
-          padding: EdgeInsets.fromLTRB(16, 12, 16, 8),
+        const Divider(height: 1),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
           child: Text(
             'Related videos',
             style: TextStyle(
-              color: Colors.white,
+              color: theme.colorScheme.onSurface,
               fontSize: 16,
               fontWeight: FontWeight.bold,
             ),
@@ -952,7 +1010,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 Expanded(
                   child: Text(
                     'No related videos',
-                    style: TextStyle(color: Colors.grey[600]),
+                    style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
                   ),
                 ),
                 TextButton.icon(
@@ -981,13 +1039,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
     required VoidCallback onTap,
     bool highlight = false,
   }) {
-    final accent = Theme.of(context).colorScheme.primary;
+    final theme = Theme.of(context);
+    final accent = theme.colorScheme.primary;
     return Padding(
       padding: const EdgeInsets.only(right: 8),
       child: Material(
         color: highlight
             ? accent.withValues(alpha: 0.25)
-            : Colors.white.withValues(alpha: 0.1),
+            : theme.colorScheme.surfaceContainerHigh,
         borderRadius: BorderRadius.circular(20),
         child: InkWell(
           borderRadius: BorderRadius.circular(20),
@@ -997,12 +1056,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
             child: Row(
               children: [
                 Icon(icon,
-                    size: 20, color: highlight ? accent : Colors.white),
+                    size: 20, color: highlight ? accent : theme.colorScheme.onSurface),
                 const SizedBox(width: 6),
                 Text(
                   label,
                   style: TextStyle(
-                    color: highlight ? accent : Colors.white,
+                    color: highlight ? accent : theme.colorScheme.onSurface,
                     fontWeight: FontWeight.w500,
                   ),
                 ),
@@ -1028,7 +1087,8 @@ class _AudioLanguagePill extends StatelessWidget {
     final vps = context.watch<VideoPlaybackService>();
     if (vps.audioTracks.length < 2) return const SizedBox.shrink();
 
-    final accent = Theme.of(context).colorScheme.primary;
+    final theme = Theme.of(context);
+    final accent = theme.colorScheme.primary;
     final current = vps.currentAudioTrack;
     final dubbed = !(current?.isOriginal ?? true);
     var label = 'Audio';
@@ -1044,7 +1104,7 @@ class _AudioLanguagePill extends StatelessWidget {
       child: Material(
         color: dubbed
             ? accent.withValues(alpha: 0.25)
-            : Colors.white.withValues(alpha: 0.1),
+            : theme.colorScheme.surfaceContainerHigh,
         borderRadius: BorderRadius.circular(20),
         child: InkWell(
           borderRadius: BorderRadius.circular(20),
@@ -1056,13 +1116,13 @@ class _AudioLanguagePill extends StatelessWidget {
                 Icon(
                   Icons.record_voice_over,
                   size: 20,
-                  color: dubbed ? accent : Colors.white,
+                  color: dubbed ? accent : theme.colorScheme.onSurface,
                 ),
                 const SizedBox(width: 6),
                 Text(
                   label,
                   style: TextStyle(
-                    color: dubbed ? accent : Colors.white,
+                    color: dubbed ? accent : theme.colorScheme.onSurface,
                     fontWeight: FontWeight.w500,
                   ),
                 ),
@@ -1165,7 +1225,8 @@ class _DownloadActionPill extends StatelessWidget {
     final active = downloads.activeFor(video.id);
     final done = active == null && downloads.isDownloaded(video.id);
 
-    final accent = Theme.of(context).colorScheme.primary;
+    final theme = Theme.of(context);
+    final accent = theme.colorScheme.primary;
     final highlight = active != null || done;
     final label = active != null
         ? (active.progress > 0 ? '${(active.progress * 100).round()}%' : '…')
@@ -1178,7 +1239,7 @@ class _DownloadActionPill extends StatelessWidget {
       child: Material(
         color: highlight
             ? accent.withValues(alpha: 0.25)
-            : Colors.white.withValues(alpha: 0.1),
+            : theme.colorScheme.surfaceContainerHigh,
         borderRadius: BorderRadius.circular(20),
         child: InkWell(
           borderRadius: BorderRadius.circular(20),
@@ -1201,13 +1262,13 @@ class _DownloadActionPill extends StatelessWidget {
                   Icon(
                     done ? Icons.download_done : Icons.download_outlined,
                     size: 20,
-                    color: highlight ? accent : Colors.white,
+                    color: highlight ? accent : theme.colorScheme.onSurface,
                   ),
                 const SizedBox(width: 6),
                 Text(
                   label,
                   style: TextStyle(
-                    color: highlight ? accent : Colors.white,
+                    color: highlight ? accent : theme.colorScheme.onSurface,
                     fontWeight: FontWeight.w500,
                   ),
                 ),

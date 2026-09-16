@@ -9,6 +9,7 @@ import 'models.dart';
 import 'music_playback_service.dart';
 import 'newpipe_service.dart';
 import 'storage_service.dart';
+import 'user_profile_service.dart';
 
 /// ═══════════════════════ VIDEO PLAYBACK SERVICE ═══════════════════════
 ///
@@ -20,8 +21,9 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
   final NewPipeService _service;
   final MusicPlaybackService _music;
   final StorageService _storage;
+  final UserProfileService _profile;
 
-  VideoPlaybackService(this._storage, this._music)
+  VideoPlaybackService(this._storage, this._music, this._profile)
       : _service = NewPipeService() {
     WidgetsBinding.instance.addObserver(this);
   }
@@ -86,8 +88,13 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
     });
     _positionSub = player.stream.position.listen((pos) {
       position = pos;
+      // Watch-percentage tracking for the recommendation profile —
+      // keeps the session's high-water mark and checkpoints the event
+      // to disk every 5 seconds alongside the playback state.
+      _profile.updateWatchSession(pos, duration);
       if ((pos - _lastSavedPosition).inSeconds >= 5) {
         _savePlaybackState(pos);
+        unawaited(_profile.checkpointWatchSession());
       }
       // Throttled UI updates keep the mini player progress smooth without
       // rebuilding listeners on every single stream event.
@@ -110,6 +117,9 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
     VideoItem video, {
     DownloadItem? download,
   }) async {
+    // Close out the previous video's watch session before starting the
+    // new one, so its watch percentage lands in the profile.
+    await _profile.endWatchSession();
     currentVideo = video;
     currentDownload = download;
     streams = [];
@@ -180,6 +190,11 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
       error = e.toString();
     } finally {
       loading = false;
+      // Session tracking starts once the stream is actually live — a
+      // failed open leaves no phantom watch event.
+      if (error == null) {
+        _profile.beginWatchSession(video);
+      }
       notifyListeners();
     }
   }
@@ -199,6 +214,7 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
 
   /// Stops playback and clears everything (mini player close button).
   Future<void> close() async {
+    await _profile.endWatchSession();
     _savePlaybackState();
     await _player?.stop();
     currentVideo = null;
@@ -376,11 +392,16 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
       _savePlaybackState();
+      // Backgrounded with the mini player still going: checkpoint now;
+      // the session continues and endWatchSession runs on the next
+      // open/close.
+      unawaited(_profile.checkpointWatchSession());
     }
   }
 
   @override
   void dispose() {
+    unawaited(_profile.endWatchSession());
     WidgetsBinding.instance.removeObserver(this);
     _notifyThrottle?.cancel();
     _playingSub?.cancel();

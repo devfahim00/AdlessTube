@@ -5,6 +5,7 @@ import 'package:adlesstube/main.dart';
 import 'package:adlesstube/download_service.dart';
 import 'package:adlesstube/music_playback_service.dart';
 import 'package:adlesstube/storage_service.dart';
+import 'package:adlesstube/user_profile_service.dart';
 import 'package:adlesstube/video_playback_service.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:provider/provider.dart';
@@ -21,22 +22,30 @@ void main() {
   testWidgets('App launches successfully', (WidgetTester tester) async {
     // Hive performs real file I/O, which needs a real event loop in
     // widget tests — that is what runAsync provides.
-    final storage = await tester.runAsync<StorageService>(() async {
-      PathProviderPlatform.instance = _MockPathProvider();
-      final storage = StorageService();
-      await storage.init();
-      return storage;
-    });
-    expect(storage, isNotNull);
+    final services =
+        await tester.runAsync<(StorageService, UserProfileService)>(
+      () async {
+        PathProviderPlatform.instance = _MockPathProvider();
+        final storage = StorageService();
+        await storage.init();
+        final profile = UserProfileService(storage);
+        await profile.init();
+        return (storage, profile);
+      },
+    );
+    expect(services, isNotNull);
+    final storage = services!.$1;
+    final profile = services.$2;
 
-    final music = MusicPlaybackService(storage!);
+    final music = MusicPlaybackService(storage);
     final downloads = DownloadService();
-    final videoPlayback = VideoPlaybackService(storage, music);
+    final videoPlayback = VideoPlaybackService(storage, music, profile);
 
     await tester.pumpWidget(
       MultiProvider(
         providers: [
           ChangeNotifierProvider.value(value: storage),
+          ChangeNotifierProvider.value(value: profile),
           ChangeNotifierProvider.value(value: music),
           ChangeNotifierProvider.value(value: downloads),
           ChangeNotifierProvider.value(value: videoPlayback),

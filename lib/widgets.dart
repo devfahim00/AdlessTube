@@ -194,6 +194,7 @@ class VideoTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return InkWell(
       onTap: onTap,
       child: Padding(
@@ -210,11 +211,13 @@ class VideoTile extends StatelessWidget {
                     width: 140,
                     height: 80,
                     placeholder: Container(
-                        width: 140, height: 80, color: Colors.grey[800]),
+                        width: 140,
+                        height: 80,
+                        color: theme.colorScheme.surfaceContainerHighest),
                     errorWidget: Container(
                       width: 140,
                       height: 80,
-                      color: Colors.grey[800],
+                      color: theme.colorScheme.surfaceContainerHighest,
                       child: const Icon(Icons.broken_image),
                     ),
                   ),
@@ -258,7 +261,9 @@ class VideoTile extends StatelessWidget {
                   const SizedBox(height: 4),
                   Text(
                     video.uploader,
-                    style: TextStyle(color: Colors.grey[400], fontSize: 12),
+                    style: TextStyle(
+                        color: theme.colorScheme.onSurfaceVariant,
+                        fontSize: 12),
                   ),
                 ],
               ),
@@ -271,12 +276,19 @@ class VideoTile extends StatelessWidget {
 }
 
 /// Big YouTube-style home tile: full-width thumbnail with the title and
-/// channel info underneath.
+/// channel info underneath, plus an optional three-dot menu used by the
+/// home feed for "Not interested" / "Don't recommend channel".
 class YouTubeVideoTile extends StatelessWidget {
   final VideoItem video;
   final VoidCallback onTap;
+  final VoidCallback? onMenuPressed;
 
-  const YouTubeVideoTile({super.key, required this.video, required this.onTap});
+  const YouTubeVideoTile({
+    super.key,
+    required this.video,
+    required this.onTap,
+    this.onMenuPressed,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -364,14 +376,28 @@ class YouTubeVideoTile extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          color: Colors.grey[500] ??
-                              theme.colorScheme.onSurfaceVariant,
+                          color: theme.colorScheme.onSurfaceVariant,
                           fontSize: 12.5,
                         ),
                       ),
                     ],
                   ),
                 ),
+                if (onMenuPressed != null)
+                  SizedBox(
+                    width: 34,
+                    height: 34,
+                    child: IconButton(
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                      iconSize: 20,
+                      icon: Icon(
+                        Icons.more_vert,
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                      onPressed: onMenuPressed,
+                    ),
+                  ),
               ],
             ),
           ),

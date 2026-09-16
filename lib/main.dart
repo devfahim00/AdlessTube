@@ -11,6 +11,7 @@ import 'region_select_screen.dart';
 import 'screens/main_shell.dart';
 import 'service_select_screen.dart';
 import 'storage_service.dart';
+import 'user_profile_service.dart';
 import 'video_playback_service.dart';
 
 void main() async {
@@ -19,9 +20,14 @@ void main() async {
 
   final storage = StorageService();
   await storage.init();
+  // The on-device recommendation profile: watch events, feedback
+  // signals, channel affinity and topic taste. Built locally, backed up
+  // with everything else, never sent anywhere.
+  final profile = UserProfileService(storage);
+  await profile.init();
   final music = MusicPlaybackService(storage);
   final downloads = DownloadService();
-  final videoPlayback = VideoPlaybackService(storage, music);
+  final videoPlayback = VideoPlaybackService(storage, music, profile);
   // Only one audio surface at a time: starting music (from the app or the
   // notification) closes the video mini player, and opening a video stops
   // music inside the service itself.
@@ -31,6 +37,7 @@ void main() async {
     MultiProvider(
       providers: [
         ChangeNotifierProvider.value(value: storage),
+        ChangeNotifierProvider.value(value: profile),
         ChangeNotifierProvider.value(value: music),
         ChangeNotifierProvider.value(value: downloads),
         ChangeNotifierProvider.value(value: videoPlayback),

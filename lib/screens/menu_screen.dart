@@ -12,6 +12,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../region_service.dart';
 import '../service_select_screen.dart';
 import '../storage_service.dart';
+import '../user_profile_service.dart';
 import 'downloads_screen.dart';
 import 'region_change_screen.dart';
 import 'settings_screen.dart';
@@ -57,6 +58,7 @@ class _MenuScreenState extends State<MenuScreen> {
 
   Future<void> _importData() async {
     final storage = context.read<StorageService>();
+    final profile = context.read<UserProfileService>();
     final messenger = ScaffoldMessenger.of(context);
 
     final picked = await FilePicker.platform.pickFiles(
@@ -74,8 +76,10 @@ class _MenuScreenState extends State<MenuScreen> {
         title: const Text('Import backup?'),
         content: const Text(
           'Your history, subscriptions, saved videos, liked songs, search '
-          'history, playback progress and settings from this backup will be '
-          'restored. Existing entries with the same key are replaced.',
+          'history, playback progress, settings — and your recommendation '
+          'profile (watch history signals, channel affinity, topic taste, '
+          'feedback) — from this backup will be restored. Existing entries '
+          'with the same key are replaced.',
         ),
         actions: [
           TextButton(
@@ -98,10 +102,14 @@ class _MenuScreenState extends State<MenuScreen> {
         throw const FormatException('Not an AdlessTube backup file.');
       }
       final restored = await storage.importData(data);
+      // Rebuild the recommendation profile from the imported signals so
+      // the personalized feed continues exactly where it left off — no
+      // cold start, no re-learning.
+      await profile.rebuildProfile();
       messenger.showSnackBar(
         SnackBar(
           content: Text(
-              'Imported $restored entries — everything is back like before.'),
+              'Imported $restored entries — your feed picks up where it left off.'),
         ),
       );
     } on FormatException {
@@ -173,7 +181,7 @@ class _MenuScreenState extends State<MenuScreen> {
             leading: const Icon(Icons.upload_file, color: Colors.green),
             title: const Text('Export data'),
             subtitle: Text(
-              'Save a backup of history, subscriptions & settings',
+              'Backup of history, subscriptions, recommendations & settings',
               style: TextStyle(color: Colors.grey[500], fontSize: 12),
             ),
             trailing: const Icon(Icons.chevron_right),
@@ -183,7 +191,7 @@ class _MenuScreenState extends State<MenuScreen> {
             leading: const Icon(Icons.restore, color: Colors.teal),
             title: const Text('Import data'),
             subtitle: Text(
-              'Restore everything from a backup file',
+              'Restore everything — your feed keeps its personalization',
               style: TextStyle(color: Colors.grey[500], fontSize: 12),
             ),
             trailing: const Icon(Icons.chevron_right),
