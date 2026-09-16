@@ -6,7 +6,6 @@ AdlessTube is a privacy-friendly, open-source YouTube front-end that lets you br
 
 [![Platform](https://img.shields.io/badge/platform-Android-3DDC84?logo=android&logoColor=white)](https://www.android.com)
 [![Framework](https://img.shields.io/badge/framework-Flutter-02569B?logo=flutter&logoColor=white)](https://flutter.dev)
-[![Language](https://img.shields.io/badge/language-Dart-0175C2?logo=dart&logoColor=white)](https://dart.dev)
 [![License](https://img.shields.io/badge/license-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![GitHub release](https://img.shields.io/github/v/release/devfahim00/AdlessTube?color=red&label=latest)](https://github.com/devfahim00/AdlessTube/releases/latest)
 [![GitHub stars](https://img.shields.io/github/stars/devfahim00/AdlessTube?style=social)](https://github.com/devfahim00/AdlessTube/stargazers)
