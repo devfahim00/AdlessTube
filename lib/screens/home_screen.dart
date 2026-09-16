@@ -249,7 +249,9 @@ class _HomeScreenState extends State<HomeScreen> {
       _accept(candidate.video);
       count++;
     }
-    _candidates = leftovers;
+    _candidates
+      ..clear()
+      ..addAll(leftovers);
     return count;
   }
 

@@ -273,7 +273,7 @@ class UserProfileService extends ChangeNotifier {
   /// aggregate in milliseconds, so it is safe on the main isolate.
   Future<void> rebuildProfile() async {
     final eventsBox = Hive.box(watchEventsBox);
-    final signalsBox = Hive.box(signalsBox);
+    final signalBox = Hive.box(signalsBox);
 
     final channelScores = <String, double>{};
     final channelNames = <String, String>{};
@@ -386,7 +386,7 @@ class UserProfileService extends ChangeNotifier {
     //      rejection does not haunt a topic forever.
     _hiddenVideoIds = {};
     _blockedChannels = {};
-    for (final value in signalsBox.values) {
+    for (final value in signalBox.values) {
       if (value is! Map) continue;
       final type = value['type']?.toString() ?? '';
       final at = (value['at'] as num?)?.toInt() ?? DateTime.now().millisecondsSinceEpoch;
