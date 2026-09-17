@@ -301,7 +301,8 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
     if (video == null || video.isLive || player == null) return false;
     if (audioOnlyMode) return true;
     try {
-      await player.setVideoTrack(VideoTrack.no());
+      await player
+          .setVideoTrack(VideoTrack.no())
           .timeout(const Duration(seconds: 4));
     } catch (_) {
       return false;

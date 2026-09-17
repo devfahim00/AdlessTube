@@ -231,8 +231,8 @@ class AdlessAudioHandler extends BaseAudioHandler
     _videoAudio = null;
     // Dismiss the video notification immediately so the song's
     // MediaItem never fights the video's for the slot.
-    playbackState.add(const PlaybackState(
-      controls: [],
+    playbackState.add(PlaybackState(
+      controls: const [],
       processingState: AudioProcessingState.idle,
     ));
     await video.stop();
