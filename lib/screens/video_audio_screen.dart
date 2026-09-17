@@ -25,6 +25,11 @@ class _VideoAudioScreenState extends State<VideoAudioScreen> {
   bool _stopping = false;
   double _dragValue = -1;
 
+  /// This screen is being REPLACED by the player page — the
+  /// replacement pop must not minimize, only a genuine back gesture
+  /// shrinks the audio into the mini player.
+  bool _replacing = false;
+
   /// Back to the video: re-enables the video track on the same player
   /// (nothing is reloaded — playback continues at the audio's exact
   /// spot) and reopens the player page on top.
@@ -37,6 +42,10 @@ class _VideoAudioScreenState extends State<VideoAudioScreen> {
     try {
       await vps.exitAudioOnly();
       if (!mounted || video == null) return;
+      // Another video took over while the mode was exiting — its page
+      // is already up; don't push ours on top of it.
+      if (vps.currentVideo?.id != video.id) return;
+      _replacing = true; // our replacement pop is not a minimize
       Navigator.pushReplacement(
         context,
         pushPlayerRoute(
@@ -95,7 +104,9 @@ class _VideoAudioScreenState extends State<VideoAudioScreen> {
       // remain), exactly like closing the video player page.
       canPop: true,
       onPopInvokedWithResult: (didPop, _) {
-        if (didPop) vps.minimize();
+        // Only a genuine user back gesture minimizes — being replaced
+        // by the player page keeps the session running untouched.
+        if (didPop && !_replacing) vps.minimize();
       },
       child: Scaffold(
         appBar: AppBar(title: const Text('Now playing')),

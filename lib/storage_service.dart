@@ -27,6 +27,7 @@ class StorageService extends ChangeNotifier {
   static const _enabledServicesKey = 'enabled_services';
   static const _shownFeedKey = 'shown_feed_ids';
   static const _animationsEnabledKey = 'animations_enabled';
+  static const _lastAudioSessionKey = 'last_audio_session';
 
   /// Box names included in a backup export / import.
   ///
@@ -391,6 +392,32 @@ class StorageService extends ChangeNotifier {
   /// Forces any pending playback-state write to disk — the app is about
   /// to be killed and the resume spot must survive.
   Future<void> flushPlayback() => Hive.box(_playbackBox).flush();
+
+  // ─────────── Restorable audio session ───────────
+
+  /// The audio-only session that was live when the app was last closed:
+  /// {videoId, positionMs, durationMs}. Written continuously while a
+  /// video plays audio-only, cleared when that session ends normally —
+  /// the next app run brings it back as a paused mini player.
+  Map<String, dynamic>? getLastAudioSession() {
+    final value = Hive.box(_settingsBox).get(_lastAudioSessionKey);
+    return value is Map ? Map<String, dynamic>.from(value) : null;
+  }
+
+  Future<void> saveLastAudioSession({
+    required String videoId,
+    required Duration position,
+    required Duration duration,
+  }) {
+    return Hive.box(_settingsBox).put(_lastAudioSessionKey, {
+      'videoId': videoId,
+      'positionMs': position.inMilliseconds,
+      'durationMs': duration.inMilliseconds,
+    });
+  }
+
+  Future<void> clearLastAudioSession() =>
+      Hive.box(_settingsBox).delete(_lastAudioSessionKey);
 
   // ─────────── Search history ───────────
 

@@ -28,6 +28,7 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
   VideoPlaybackService(this._storage, this._music, this._profile)
       : _service = NewPipeService() {
     WidgetsBinding.instance.addObserver(this);
+    _restoreLastAudioSession();
   }
 
   Player? _player;
@@ -45,6 +46,18 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
   /// A resume-correction loop from an older generation stands down as
   /// soon as its number is outdated — it never fights a newer action.
   int _resumeGeneration = 0;
+
+  /// Bumped on every open / close / audio-mode toggle. enterAudioOnly's
+  /// slow track switch validates against it once its await returns, so
+  /// a toggle that raced with opening another video can never arm the
+  /// audio mode on top of that new video (black screen with audio).
+  int _sessionGeneration = 0;
+
+  /// A restorable audio session from the previous app run: the mini
+  /// player is back (paused) on the video that was listening, at the
+  /// exact saved spot — no media is loaded until the first play press.
+  bool _restoredSession = false;
+  bool get needsReload => _restoredSession;
 
   VideoItem? currentVideo;
   DownloadItem? currentDownload;
@@ -104,7 +117,7 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
       // Persist immediately when the user pauses so an app close never
       // loses more than a moment of progress.
       if (!playing && position.inMilliseconds > 0) {
-        _savePlaybackState();
+        unawaited(_savePlaybackState());
       }
       notifyListeners();
     });
@@ -119,7 +132,7 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
       // spot would stay at the old high position until playback passed
       // it again.
       if ((pos - _lastSavedPosition).abs().inSeconds >= 3) {
-        _savePlaybackState(pos);
+        unawaited(_savePlaybackState(pos));
         unawaited(_profile.checkpointWatchSession());
       }
       // Throttled UI updates keep the mini player progress smooth without
@@ -138,14 +151,31 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
   // ─────────── Open / close ───────────
 
   /// Starts [video]. If [download] is set, the local files are played
-  /// instead of the network streams.
+  /// instead of the network streams. [audioOnly] reloads a restored
+  /// session straight into audio-only mode (track off, notification
+  /// controls re-attached once the stream is live).
   Future<void> open(
     VideoItem video, {
     DownloadItem? download,
+    bool audioOnly = false,
   }) async {
+    final generation = ++_sessionGeneration;
+    // A newer open / close / toggle must always win — this run stands
+    // down at its next checkpoint instead of clobbering it. (Two quick
+    // video taps used to leave the player playing one video while the
+    // page showed another.)
+    bool stale() => _sessionGeneration != generation;
+    _resumeGeneration++;
+    _restoredSession = false;
+    // Pin the outgoing video's exact last spot before anything can go
+    // wrong — a doomed open must never cost the previous video its
+    // resume position.
+    await _savePlaybackState();
+    if (stale()) return;
     // Close out the previous video's watch session before starting the
     // new one, so its watch percentage lands in the profile.
     await _profile.endWatchSession();
+    if (stale()) return;
     currentVideo = video;
     currentDownload = download;
     streams = [];
@@ -155,9 +185,13 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
     playbackSpeed = 1.0;
     loading = true;
     error = null;
-    miniVisible = false;
+    // Reloading an audio session keeps the mini player it lives in.
+    if (!audioOnly) miniVisible = false;
     position = Duration.zero;
     duration = Duration.zero;
+    // The new video keeps its own save history — a leftover spot from
+    // the previous video could otherwise clobber this one's resume.
+    _lastSavedPosition = Duration.zero;
     notifyListeners();
 
     // Opening a video always leaves audio-only mode — release the
@@ -166,12 +200,23 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
     if (audioOnlyMode) {
       audioOnlyMode = false;
       await _detachNotificationBridge();
+      // mpv may still hold vid=no from the audio session — force the
+      // track back on so a half-failed open can never leave a black
+      // surface with the previous video's audio running under it.
+      try {
+        await _player?.setVideoTrack(VideoTrack.auto());
+      } catch (_) {}
+      unawaited(_storage.clearLastAudioSession());
     }
+    // The restored-session reload re-arms immediately, so the UI keeps
+    // its audio styling throughout the load.
+    if (audioOnly) audioOnlyMode = true;
 
     // Only one audio surface: opening a video stops music first (a
     // stopped music session is a no-op, and the stop() guard keeps a
     // bridged video from ever being routed a stray music stop).
     await _music.stop();
+    if (stale()) return;
 
     _ensurePlayer();
     try {
@@ -182,11 +227,19 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
         }
         _rawPosition = null;
         await _player!.open(Media(videoPath));
+        if (stale()) return;
         final audioPath = download.audioPath;
         if (audioPath != null && File(audioPath).existsSync()) {
           await _player!
               .setAudioTrack(AudioTrack.uri(Uri.file(audioPath).toString()));
         }
+        // Deterministic track state for local files too — a restored
+        // audio session reloads with the track off, everything else
+        // with the track guaranteed on.
+        try {
+          await _player!
+              .setVideoTrack(audioOnly ? VideoTrack.no() : VideoTrack.auto());
+        } catch (_) {}
         // Downloaded files resume too: the correction loop seeks to the
         // last watched spot once the file is actually live (see
         // _resumeAt).
@@ -202,6 +255,7 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
         final available = await _service
             .getAvailableStreams(video.url)
             .timeout(const Duration(seconds: 25));
+        if (stale()) return;
         if (available.isEmpty) {
           throw StateError('No playable stream found.');
         }
@@ -226,21 +280,49 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
         audioTracks = await _service
             .getAudioTracks(video.url)
             .timeout(const Duration(seconds: 12));
+        if (stale()) return;
         currentAudioTrack = _pickDefaultAudioTrack();
-        await _openStream(currentStream!, start: savedPosition);
+        await _openStream(currentStream!, start: savedPosition,
+            audioOnly: audioOnly);
         await _player!.play();
+      }
+      if (audioOnly) {
+        // The restored audio session is live again — notification
+        // controls return with it.
+        unawaited(_attachNotificationBridge());
       }
       await _player!.setRate(playbackSpeed);
     } catch (e) {
+      // A newer session owns the UI now — a stale failure must not
+      // clobber its state.
+      if (stale()) return;
       error = e.toString();
+      _resumeGeneration++;
+      // A failed open must never leave the previous video's audio
+      // playing under this video's error page, nor a dead session the
+      // mini player could tap into — stop the engine and clear the
+      // session. The page keeps showing the error + Retry.
+      isPlaying = false;
+      await _player?.stop();
+      currentVideo = null;
+      currentDownload = null;
+      currentStream = null;
+      streams = [];
+      audioTracks = [];
+      currentAudioTrack = null;
+      position = Duration.zero;
+      duration = Duration.zero;
+      _restoredSession = false;
     } finally {
-      loading = false;
-      // Session tracking starts once the stream is actually live — a
-      // failed open leaves no phantom watch event.
-      if (error == null) {
-        _profile.beginWatchSession(video);
+      if (!stale()) {
+        loading = false;
+        // Session tracking starts once the stream is actually live — a
+        // failed open leaves no phantom watch event.
+        if (error == null) {
+          _profile.beginWatchSession(video);
+        }
+        notifyListeners();
       }
-      notifyListeners();
     }
   }
 
@@ -260,12 +342,15 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
   /// Stops playback and clears everything (mini player close button).
   Future<void> close() async {
     _resumeGeneration++;
+    _sessionGeneration++;
+    _restoredSession = false;
     if (audioOnlyMode) {
       audioOnlyMode = false;
       await _detachNotificationBridge();
+      unawaited(_storage.clearLastAudioSession());
     }
     await _profile.endWatchSession();
-    _savePlaybackState();
+    unawaited(_savePlaybackState());
     await _player?.stop();
     currentVideo = null;
     currentDownload = null;
@@ -300,6 +385,7 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
     final player = _player;
     if (video == null || video.isLive || player == null) return false;
     if (audioOnlyMode) return true;
+    final generation = ++_sessionGeneration;
     try {
       await player
           .setVideoTrack(VideoTrack.no())
@@ -307,8 +393,19 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
     } catch (_) {
       return false;
     }
+    // The slow track switch raced with something — another video
+    // opened, the session closed, or a newer toggle happened. Arming
+    // the mode now would disable the track of whatever is playing
+    // instead (a black screen with audio) — restore the track and
+    // stand down.
+    if (_sessionGeneration != generation || currentVideo?.id != video.id) {
+      try {
+        await player.setVideoTrack(VideoTrack.auto());
+      } catch (_) {}
+      return false;
+    }
     audioOnlyMode = true;
-    _savePlaybackState();
+    unawaited(_savePlaybackState());
     notifyListeners();
     // Background audio + notification controls. Runs after the toggle
     // so the UI reacts instantly; the notification appears once the
@@ -322,11 +419,12 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
   /// exact spot the audio reached — nothing is reloaded or re-seeked.
   Future<void> exitAudioOnly() async {
     if (!audioOnlyMode) return;
+    _sessionGeneration++;
     audioOnlyMode = false;
     try {
       await _player?.setVideoTrack(VideoTrack.auto());
     } catch (_) {}
-    _savePlaybackState();
+    unawaited(_savePlaybackState());
     await _detachNotificationBridge();
     notifyListeners();
   }
@@ -418,6 +516,24 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> togglePlayPause() async {
     if (currentVideo == null) return;
+    // A restored session (previous app run) has no media loaded yet —
+    // the first play press reloads it, audio-only, at the saved spot.
+    if (_restoredSession) {
+      _restoredSession = false;
+      final video = currentVideo!;
+      await open(video, audioOnly: true);
+      if (error != null) {
+        // The reload failed (offline, stream expired) — drop the ghost
+        // session instead of leaving dead controls behind.
+        await close();
+      } else if (currentVideo?.id == video.id) {
+        // Toggled straight from the mini player: it stays around
+        // under whatever screen is on top.
+        miniVisible = true;
+        notifyListeners();
+      }
+      return;
+    }
     if (isPlaying) {
       await _player?.pause();
     } else {
@@ -442,7 +558,7 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
     _resumeGeneration++;
     await _player?.seek(target);
     position = target;
-    _savePlaybackState(target);
+    unawaited(_savePlaybackState(target));
     notifyListeners();
   }
 
@@ -468,7 +584,7 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
     } else {
       await _player?.pause();
     }
-    _savePlaybackState(pos);
+    unawaited(_savePlaybackState(pos));
     notifyListeners();
   }
 
@@ -521,7 +637,8 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _openStream(VideoStreamInfo stream, {Duration? start}) async {
+  Future<void> _openStream(VideoStreamInfo stream,
+      {Duration? start, bool audioOnly = false}) async {
     final startAt =
         start != null && start.inMilliseconds > 1500 ? start : null;
     _rawPosition = null;
@@ -537,13 +654,15 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
         language: currentAudioTrack?.locale,
       ));
     }
-    // A fresh media load resets mpv's track selection — a quality swap
-    // (or any reopen) made while in audio-only mode must stay audio-only.
-    if (audioOnlyMode) {
-      try {
-        await _player?.setVideoTrack(VideoTrack.no());
-      } catch (_) {}
-    }
+    // A fresh media load resets mpv's track selection — make the track
+    // state deterministic on every load: audio-only stays audio-only,
+    // and every other load guarantees the track is ON (a leftover
+    // vid=no can never black-screen the next video).
+    final stayAudioOnly = audioOnlyMode || audioOnly;
+    try {
+      await _player?.setVideoTrack(
+          stayAudioOnly ? VideoTrack.no() : VideoTrack.auto());
+    } catch (_) {}
     if (startAt != null) {
       position = startAt;
       // Some stream types (adaptive video-only URLs in particular)
@@ -651,7 +770,7 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
     return match == null ? 0 : int.parse(match.group(1)!);
   }
 
-  void _savePlaybackState([Duration? pos]) {
+  Future<void> _savePlaybackState([Duration? pos]) async {
     final video = currentVideo;
     if (video == null) return;
     final current = pos ?? position;
@@ -659,14 +778,68 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
     // with an empty one.
     if (current.inMilliseconds <= 0) return;
     _lastSavedPosition = current;
-    final stream = currentStream;
-    unawaited(_storage.savePlaybackState(
+    var quality = currentStream?.quality;
+    var format = currentStream?.format;
+    if (currentStream == null) {
+      // No live stream (a restored session): keep the saved choice —
+      // never wipe a good quality/format with nulls.
+      final saved = _storage.getPlaybackState(video.id);
+      quality = saved?['quality'] as String?;
+      format = saved?['format'] as String?;
+    }
+    await _storage.savePlaybackState(
       videoId: video.id,
       position: current,
       duration: duration,
-      quality: stream?.quality,
-      format: stream?.format,
-    ));
+      quality: quality,
+      format: format,
+    );
+    // While audio-only runs, the same spot also feeds the restorable
+    // session record — an app close mid-audio brings the mini player
+    // back on the next run, paused at this exact position.
+    if (audioOnlyMode) {
+      await _storage.saveLastAudioSession(
+        videoId: video.id,
+        position: current,
+        duration: duration,
+      );
+    }
+  }
+
+  /// Brings back an audio-only session that was cut off by the app
+  /// being closed: the mini player reappears (paused) on the video
+  /// that was listening, at the exact saved spot. The first play
+  /// press reloads the stream; until then no player, no notification
+  /// and no network are touched.
+  void _restoreLastAudioSession() {
+    try {
+      final record = _storage.getLastAudioSession();
+      if (record == null) return;
+      final videoId = record['videoId'] as String?;
+      final posMs = (record['positionMs'] as int?) ?? 0;
+      final durMs = (record['durationMs'] as int?) ?? 0;
+      if (videoId == null || videoId.isEmpty || posMs < 1500) return;
+      // A (near) finished session is not worth resurrecting.
+      if (durMs > 0 && posMs >= durMs * 0.97) return;
+      // Full metadata comes from history — no network needed.
+      VideoItem? item;
+      for (final entry in _storage.getHistory()) {
+        if (entry.id == videoId) {
+          item = entry;
+          break;
+        }
+      }
+      if (item == null || item.isLive) return;
+      currentVideo = item;
+      position = Duration(milliseconds: posMs);
+      duration = Duration(milliseconds: durMs);
+      audioOnlyMode = true;
+      _restoredSession = true;
+      miniVisible = true;
+      loading = false;
+    } catch (_) {
+      // A corrupt record must never block startup.
+    }
   }
 
   @override
@@ -675,15 +848,14 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
         state == AppLifecycleState.hidden ||
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
-      _savePlaybackState();
-      // Backgrounded with the mini player still going: checkpoint now;
-      // the session continues and endWatchSession runs on the next
-      // open/close.
-      unawaited(_profile.checkpointWatchSession());
-      // The OS can reap the process at any moment after this — push the
-      // saved resume spot to disk before it does, so closing the app
-      // never loses it.
-      unawaited(_storage.flushPlayback());
+      // Sequential save → checkpoint → flush: the write must be ISSUED
+      // (and the box flushed) before the OS can reap the process —
+      // parallel unawaited calls could lose the very last spot.
+      unawaited(() async {
+        await _savePlaybackState();
+        await _profile.checkpointWatchSession();
+        await _storage.flushPlayback();
+      }());
     }
   }
 

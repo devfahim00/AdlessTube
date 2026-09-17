@@ -50,6 +50,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
   bool _loadingRelated = false;
   bool _switchingToAudio = false;
 
+  /// This page is being REPLACED by the next one (related video, Now
+  /// Playing, downloaded copy) — the replacement pop must not shrink
+  /// the video into the mini player, only a genuine back gesture does.
+  bool _replacing = false;
+
   // ── Channel info (subscriber count under the channel name) ──
   int? _subscriberCount;
   bool _loadingChannelInfo = false;
@@ -63,7 +68,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     // or switching to a related video); otherwise start a fresh one.
     final alreadyLoaded =
         _vps.currentVideo?.id == widget.video.id && _vps.currentVideo != null;
-    if (alreadyLoaded) {
+    if (alreadyLoaded && !_vps.needsReload) {
       _vps.resumePage();
       // Opening the video itself always means video: an audio-only
       // session for it (feed tap while listening in the background)
@@ -73,6 +78,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
         unawaited(_vps.exitAudioOnly());
       }
     } else {
+      // Also covers a RESTORED audio session (previous app run) for
+      // this same video: it has no media loaded yet, so the feed tap
+      // plays it properly — video mode, at the saved spot.
       unawaited(_vps.open(widget.video, download: widget.download));
     }
     _loadRelated();
@@ -109,15 +117,20 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (mounted) setState(() => _loadingRelated = false);
   }
 
-  void _openRelated(VideoItem v) async {
+  Future<void> _openRelated(VideoItem v) async {
     final storage = context.read<StorageService>();
+    // The navigator is captured before the await: if this page gets
+    // replaced while history is being written (e.g. a pending
+    // audio-only toggle lands), the tapped video still opens on top
+    // of whatever is showing now.
+    final navigator = Navigator.of(context);
+    final animations = storage.animationsEnabled;
     await storage.addToHistory(v);
-    if (!mounted) return;
-    Navigator.pushReplacement(
-      context,
+    _replacing = true; // our replacement pop is not a minimize
+    navigator.pushReplacement(
       pushPlayerRoute(
         PlayerScreen(video: v),
-        animationsEnabled: storage.animationsEnabled,
+        animationsEnabled: animations,
       ),
     );
   }
@@ -143,6 +156,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
         );
         return;
       }
+      // The toggle raced with opening another video (its page is
+      // already up) — don't layer Now Playing on top of it.
+      if (_vps.currentVideo?.id != widget.video.id) return;
+      _replacing = true; // our replacement pop is not a minimize
       Navigator.pushReplacement(
         context,
         pushPlayerRoute(
@@ -510,6 +527,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 ),
                 onTap: () {
                   Navigator.pop(sheetContext);
+                  _replacing = true; // replacement pop is not a minimize
                   Navigator.pushReplacement(
                     context,
                     pushPlayerRoute(
@@ -828,7 +846,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
     return PopScope(
       canPop: true,
       onPopInvokedWithResult: (didPop, _) {
-        if (didPop) _vps.minimize();
+        // Only a genuine user back gesture minimizes — being replaced
+        // by the next video (or the Now Playing screen) is not one.
+        if (didPop && !_replacing) _vps.minimize();
       },
       child: pipPage,
     );
