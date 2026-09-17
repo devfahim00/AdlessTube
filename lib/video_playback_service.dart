@@ -153,11 +153,14 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
   /// Starts [video]. If [download] is set, the local files are played
   /// instead of the network streams. [audioOnly] reloads a restored
   /// session straight into audio-only mode (track off, notification
-  /// controls re-attached once the stream is live).
+  /// controls re-attached once the stream is live). [startAt] is an
+  /// explicit resume spot (the restored session's exact position) that
+  /// wins over whatever the storage read returns.
   Future<void> open(
     VideoItem video, {
     DownloadItem? download,
     bool audioOnly = false,
+    Duration? startAt,
   }) async {
     final generation = ++_sessionGeneration;
     // A newer open / close / toggle must always win — this run stands
@@ -165,6 +168,8 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
     // video taps used to leave the player playing one video while the
     // page showed another.)
     bool stale() => _sessionGeneration != generation;
+    final resumeOverride =
+        startAt != null && startAt.inMilliseconds > 1500 ? startAt : null;
     _resumeGeneration++;
     _restoredSession = false;
     // Pin the outgoing video's exact last spot before anything can go
@@ -197,7 +202,12 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
     // Opening a video always leaves audio-only mode — release the
     // notification bridge BEFORE the music stop below, so a routed
     // stop can never reach close() and wipe the video being opened.
-    if (audioOnlyMode) {
+    // Presence-based: a bridge left over from a timed-out toggle is
+    // caught here even though the flag already flipped.
+    if (audioOnlyMode ||
+        _notificationHandler != null ||
+        _bridgeSubs.isNotEmpty ||
+        _bridgeTimer != null) {
       audioOnlyMode = false;
       await _detachNotificationBridge();
       // mpv may still hold vid=no from the audio session — force the
@@ -206,7 +216,10 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
       try {
         await _player?.setVideoTrack(VideoTrack.auto());
       } catch (_) {}
-      unawaited(_storage.clearLastAudioSession());
+      // A normal open ends the restorable audio session. The reload
+      // (audioOnly) takes the record over instead — if it fails, the
+      // ghost can still be retried on the next app run.
+      if (!audioOnly) unawaited(_storage.clearLastAudioSession());
     }
     // The restored-session reload re-arms immediately, so the UI keeps
     // its audio styling throughout the load.
@@ -242,8 +255,10 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
         } catch (_) {}
         // Downloaded files resume too: the correction loop seeks to the
         // last watched spot once the file is actually live (see
-        // _resumeAt).
-        final resumeAt = _resumePosition(_storage.getPlaybackState(video.id));
+        // _resumeAt). An explicit override (the restored audio
+        // session's spot) wins over the stored one.
+        final resumeAt = resumeOverride ??
+            _resumePosition(_storage.getPlaybackState(video.id));
         if (resumeAt > Duration.zero) {
           position = resumeAt;
           _resumePlayback(resumeAt);
@@ -263,9 +278,11 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
         final savedQuality = saved?['quality'];
         final savedFormat = saved?['format'];
         // Live streams keep no resume spot — their timeline is not the
-        // recording's.
-        final savedPosition =
-            video.isLive ? Duration.zero : _resumePosition(saved);
+        // recording's. The restored audio session's explicit spot wins
+        // over the stored one (a storage round-trip can be stale).
+        final savedPosition = video.isLive
+            ? Duration.zero
+            : (resumeOverride ?? _resumePosition(saved));
         streams = available;
         currentStream = _selectDefaultStream(
             available, _storage.defaultQuality);
@@ -344,7 +361,12 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
     _resumeGeneration++;
     _sessionGeneration++;
     _restoredSession = false;
-    if (audioOnlyMode) {
+    // Presence-based: even a bridge that survived a timed-out toggle
+    // must be released here, or its notification outlives the session.
+    if (audioOnlyMode ||
+        _notificationHandler != null ||
+        _bridgeSubs.isNotEmpty ||
+        _bridgeTimer != null) {
       audioOnlyMode = false;
       await _detachNotificationBridge();
       unawaited(_storage.clearLastAudioSession());
@@ -419,13 +441,24 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
   /// exact spot the audio reached — nothing is reloaded or re-seeked.
   Future<void> exitAudioOnly() async {
     if (!audioOnlyMode) return;
-    _sessionGeneration++;
+    final generation = ++_sessionGeneration;
     audioOnlyMode = false;
     try {
-      await _player?.setVideoTrack(VideoTrack.auto());
+      await _player
+          ?.setVideoTrack(VideoTrack.auto())
+          .timeout(const Duration(seconds: 4));
     } catch (_) {}
     unawaited(_savePlaybackState());
-    await _detachNotificationBridge();
+    // Only this session releases its own bridge — if a newer open or
+    // close already took over (the generation moved on), that call has
+    // detached whatever was live and this one must not touch it.
+    if (_sessionGeneration == generation) {
+      await _detachNotificationBridge();
+      // The audio session is over — the restorable record must not
+      // outlive it (a later app close in video mode would otherwise
+      // resurrect a stale audio ghost on the next run).
+      unawaited(_storage.clearLastAudioSession());
+    }
     notifyListeners();
   }
 
@@ -437,17 +470,27 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> _attachNotificationBridge() async {
     if (_notificationHandler != null || _attachingBridge) return;
     _attachingBridge = true;
+    final generation = _sessionGeneration;
     try {
       final handler = await sharedAudioHandler();
       final player = _player;
       final video = currentVideo;
       if (!audioOnlyMode || player == null || video == null) return;
+      // A newer open / close / toggle took the surface while the
+      // (cold) audio service was starting — arming this bridge now
+      // would push a dead session's state and route its controls.
+      if (_sessionGeneration != generation) return;
       _notificationHandler = handler;
+      final videoId = video.id;
       handler.attachVideoAudio(VideoAudioController(
         play: () async => player.play(),
         pause: () async => player.pause(),
         seek: (position) => seekTo(position),
-        stop: () => close(),
+        // Notification stop: a stale bridge must never tear down a
+        // newer session that has taken over since.
+        stop: () => currentVideo?.id == videoId
+            ? close()
+            : Future<void>.value(),
       ));
       handler.setVideoMediaItem(MediaItem(
         id: 'audio:${video.id}',
@@ -521,7 +564,9 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
     if (_restoredSession) {
       _restoredSession = false;
       final video = currentVideo!;
-      await open(video, audioOnly: true);
+      // The ghost's exact spot — not a storage round-trip that could
+      // have gone stale or been clobbered in between.
+      await open(video, audioOnly: true, startAt: position);
       if (error != null) {
         // The reload failed (offline, stream expired) — drop the ghost
         // session instead of leaving dead controls behind.
@@ -704,43 +749,49 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
   ///
   /// The loop stands down as soon as the position matches, the user
   /// seeks manually, or another open / quality swap takes over.
+  /// Buffering time (no position reports yet) does not burn the
+  /// watchdog budget — a cold start on a slow network must never give
+  /// up and leave the stream playing from 00:00.
   Future<void> _resumeAt(Duration target, int generation) async {
+    bool gone() => _resumeGeneration != generation || _player == null;
     // Phase 1 — the file is live once the player reports a duration or
     // its first position; seeking before that is the dropped-seek
-    // window. Warm swaps (quality change) skip the wait instantly.
+    // window. Warm swaps (quality change) skip the wait instantly;
+    // cold starts on slow networks get a generous absolute cap.
     var waited = 0;
-    while (_resumeGeneration == generation &&
-        _rawPosition == null &&
-        duration <= Duration.zero &&
-        waited < 4000) {
-      await Future<void>.delayed(const Duration(milliseconds: 150));
-      waited += 150;
+    while (!gone() && waited < 30000) {
+      if (_rawPosition != null || duration > Duration.zero) break;
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      waited += 200;
     }
-    if (_resumeGeneration != generation || _player == null) return;
+    if (gone()) return;
     try {
       await _player!.seek(target);
     } catch (_) {}
-    if (_resumeGeneration != generation) return;
+    if (gone()) return;
     position = target;
     notifyListeners();
     // Phase 2 — watchdog: re-seek while the player still reports a
     // spot far before the target (start hint AND first seek both
-    // dropped on a slow-loading stream). Buffers count as "keep
-    // waiting", not as failure.
-    var elapsed = 0;
-    while (_resumeGeneration == generation && elapsed < 12000) {
+    // dropped on a slow-loading stream). Reports flowing is what
+    // counts against the budget; pure buffering (no reports) waits
+    // for free under a hard absolute cap.
+    var reportTime = 0;
+    var totalTime = 0;
+    while (!gone() && reportTime < 15000 && totalTime < 60000) {
       await Future<void>.delayed(const Duration(milliseconds: 600));
-      elapsed += 600;
-      if (_resumeGeneration != generation || _player == null) return;
+      totalTime += 600;
+      if (gone()) return;
       final raw = _rawPosition;
       // No position reports yet — still buffering; keep waiting.
       if (raw == null) continue;
+      reportTime += 600;
       // At (or past) the target — the resume stuck, hands off.
       if (raw > target - const Duration(seconds: 3)) break;
       try {
         await _player!.seek(target);
       } catch (_) {}
-      if (_resumeGeneration != generation) return;
+      if (gone()) return;
       position = target;
       notifyListeners();
     }
@@ -852,6 +903,21 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
       // (and the box flushed) before the OS can reap the process —
       // parallel unawaited calls could lose the very last spot.
       unawaited(() async {
+        // Pin the restorable audio session first, at the freshest
+        // player-reported spot — the service field can lag a tick
+        // behind, and this record is what the next app run resumes
+        // from after an app close mid-audio.
+        final video = currentVideo;
+        if (audioOnlyMode && video != null) {
+          final live = _rawPosition ?? position;
+          if (live.inMilliseconds > 0) {
+            await _storage.saveLastAudioSession(
+              videoId: video.id,
+              position: live,
+              duration: duration,
+            );
+          }
+        }
         await _savePlaybackState();
         await _profile.checkpointWatchSession();
         await _storage.flushPlayback();

@@ -390,8 +390,13 @@ class StorageService extends ChangeNotifier {
   }
 
   /// Forces any pending playback-state write to disk — the app is about
-  /// to be killed and the resume spot must survive.
-  Future<void> flushPlayback() => Hive.box(_playbackBox).flush();
+  /// to be killed and the resume spot must survive. The restorable
+  /// audio session record lives in the settings box, so that one is
+  /// flushed too (an unflushed put would lose the close-moment spot).
+  Future<void> flushPlayback() async {
+    await Hive.box(_playbackBox).flush();
+    await Hive.box(_settingsBox).flush();
+  }
 
   // ─────────── Restorable audio session ───────────
 

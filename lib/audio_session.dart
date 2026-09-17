@@ -105,6 +105,11 @@ class AdlessAudioHandler extends BaseAudioHandler
   Future<void> play() {
     final video = _videoAudio;
     if (video != null) return video.play();
+    // A play command with nothing loaded can't produce audio — stray
+    // headset / media-key events (or a stale notification tap) must
+    // not close the video mini player for nothing. Only a real music
+    // resume (a loaded source) yields the surface to music.
+    if (!hasSource) return Future<void>.value();
     onPlayStarting?.call();
     return player.play();
   }
