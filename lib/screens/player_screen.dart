@@ -17,7 +17,7 @@ import '../storage_service.dart';
 import '../video_playback_service.dart';
 import '../widgets.dart';
 import 'channel_screen.dart';
-import 'music_player_screen.dart';
+import 'video_audio_screen.dart';
 import 'video_controls.dart';
 
 /// ═══════════════════════ PLAYER ═══════════════════════
@@ -65,6 +65,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
         _vps.currentVideo?.id == widget.video.id && _vps.currentVideo != null;
     if (alreadyLoaded) {
       _vps.resumePage();
+      // Opening the video itself always means video: an audio-only
+      // session for it (feed tap while listening in the background)
+      // restores the video track — playback continues at the exact
+      // spot the audio reached.
+      if (_vps.audioOnlyMode) {
+        unawaited(_vps.exitAudioOnly());
+      }
     } else {
       unawaited(_vps.open(widget.video, download: widget.download));
     }
@@ -115,19 +122,17 @@ class _PlayerScreenState extends State<PlayerScreen> {
     );
   }
 
-  /// Audio-only handoff: capture the current spot, hand playback to
-  /// the background music service (notification controls included)
-  /// and continue in the Now Playing screen — exactly like the Music
-  /// tab. The video's resume position keeps syncing while the audio
-  /// plays, so closing the app or reopening the video never loses the
-  /// spot.
+  /// Audio-only mode: the same player keeps running with its video
+  /// track disabled — the audio continues from this exact spot and the
+  /// dedicated Now Playing screen takes over (notification controls
+  /// included). The music session is never touched.
   Future<void> _startAudioOnly() async {
     if (_switchingToAudio) return;
     // Instant feedback: the pill lights up and swaps to a spinner while
-    // the background handoff runs.
+    // the toggle runs.
     setState(() => _switchingToAudio = true);
     try {
-      final started = await _vps.switchToAudioOnly();
+      final started = await _vps.enterAudioOnly();
       if (!mounted) return;
       if (!started) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -140,11 +145,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
       }
       Navigator.pushReplacement(
         context,
-        MaterialPageRoute(
-          builder: (_) => MusicPlayerScreen(
-            song: widget.video,
-            autoPlay: false,
-          ),
+        pushPlayerRoute(
+          const VideoAudioScreen(),
+          animationsEnabled:
+              context.read<StorageService>().animationsEnabled,
         ),
       );
     } finally {
@@ -927,10 +931,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 video: video,
                 onTap: _openDownloadSheet,
               ),
-              // Audio-only: hand playback to the background music
-              // service and continue in Now Playing — notification
-              // controls included. Live streams keep no timeline, so
-              // they stay in the video player.
+              // Audio-only: the video track turns off on the same
+              // player and the dedicated Now Playing takes over —
+              // notification controls included. Live streams keep no
+              // timeline, so they stay in the video player.
               if (!video.isLive)
                 _actionPill(
                   icon: Icons.headphones_outlined,

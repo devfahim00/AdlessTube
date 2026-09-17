@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:audio_service/audio_service.dart';
 import 'package:flutter/widgets.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
+import 'audio_session.dart';
 import 'models.dart';
 import 'music_playback_service.dart';
 import 'newpipe_service.dart';
@@ -52,6 +54,23 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
   List<AudioTrackOption> audioTracks = [];
   AudioTrackOption? currentAudioTrack;
   double playbackSpeed = 1.0;
+
+  /// Audio-only mode: the SAME player keeps running with its video
+  /// track disabled (Flow-style) — position, quality and dub survive
+  /// by design, there is no handoff to another engine and nothing to
+  /// seek or wait for. The video surface returns via exitAudioOnly().
+  bool audioOnlyMode = false;
+
+  // ─────────── Notification bridge (audio-only mode) ───────────
+  //
+  // While audio-only runs, the shared audio-service handler (the
+  // same one the Music tab uses) shows the video as a media
+  // notification: play/pause/seek/stop from the lock screen route
+  // straight back to this player, and its state is pushed from mpv.
+  AdlessAudioHandler? _notificationHandler;
+  List<StreamSubscription> _bridgeSubs = [];
+  Timer? _bridgeTimer;
+  bool _attachingBridge = false;
 
   bool loading = true;
   String? error;
@@ -141,10 +160,17 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
     duration = Duration.zero;
     notifyListeners();
 
-    // Only one audio surface: opening a video stops music first. The
-    // await matters — a handed-off audio's final position sync must
-    // land before the resume spot is read below, so reopening a video
-    // whose audio is playing continues from the audio's live spot.
+    // Opening a video always leaves audio-only mode — release the
+    // notification bridge BEFORE the music stop below, so a routed
+    // stop can never reach close() and wipe the video being opened.
+    if (audioOnlyMode) {
+      audioOnlyMode = false;
+      await _detachNotificationBridge();
+    }
+
+    // Only one audio surface: opening a video stops music first (a
+    // stopped music session is a no-op, and the stop() guard keeps a
+    // bridged video from ever being routed a stray music stop).
     await _music.stop();
 
     _ensurePlayer();
@@ -234,6 +260,10 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
   /// Stops playback and clears everything (mini player close button).
   Future<void> close() async {
     _resumeGeneration++;
+    if (audioOnlyMode) {
+      audioOnlyMode = false;
+      await _detachNotificationBridge();
+    }
     await _profile.endWatchSession();
     _savePlaybackState();
     await _player?.stop();
@@ -254,79 +284,135 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
 
   // ─────────── Controls ───────────
 
-  /// Audio-only handoff: captures the current spot, pauses the video
-  /// and continues playback through the music pipeline instead —
-  /// background audio with notification controls, exactly like the
-  /// Music tab's Now Playing. The music service keeps the video's
-  /// resume position in sync while the audio plays, so closing the
-  /// app or reopening the video lands on the exact spot the audio
-  /// reached. Returns false when the handoff failed (the video then
-  /// resumes exactly where it was).
-  Future<bool> switchToAudioOnly() async {
+  /// Audio-only mode: keeps the SAME player running with its video
+  /// track disabled — the audio (with whatever dub is selected)
+  /// continues from the current spot with the exact position,
+  /// quality and speed preserved. There is no stream handoff and no
+  /// seek to wait for, so this can never stall. The notification
+  /// bridge attaches in the background and brings lock-screen
+  /// controls (play/pause/seek/stop) with it.
+  ///
+  /// Returns false when the mode could not be entered (no video,
+  /// live stream, or the track switch was refused) — the video then
+  /// keeps playing unchanged.
+  Future<bool> enterAudioOnly() async {
     final video = currentVideo;
-    if (video == null || video.isLive) return false;
-
-    final startAt = position;
-    final download = currentDownload;
-    final stream = currentStream;
-    // The audio the video was actually playing — keeps a chosen dub
-    // and skips a fresh stream extraction.
-    final audioUrl = currentAudioTrack?.url ?? stream?.audioUrl;
-    final quality = stream?.quality;
-    final format = stream?.format;
-
-    // Downloads continue from the local files: the downloaded audio
-    // track first, the muxed video file otherwise (it carries the
-    // audio just as well).
-    String? localAudio;
-    if (download != null) {
-      final audioPath = download.audioPath;
-      if (audioPath != null && File(audioPath).existsSync()) {
-        localAudio = audioPath;
-      } else {
-        final videoPath = download.videoPath;
-        if (videoPath != null && File(videoPath).existsSync()) {
-          localAudio = videoPath;
-        }
-      }
-    }
-
-    // Pause first: no doubled audio while the music stream loads,
-    // and a failed handoff can simply resume the video right here.
+    final player = _player;
+    if (video == null || video.isLive || player == null) return false;
+    if (audioOnlyMode) return true;
     try {
-      await _player?.pause();
-    } catch (_) {}
-
-    // Pin the video's spot before the handoff.
-    _savePlaybackState(startAt);
-
-    final started = await _music.play(
-      video,
-      // A fresh single-song queue: a stale music queue must never
-      // leak into the notification's next/previous for this audio,
-      // and setQueue also clears a leftover radio flag.
-      queue: [video],
-      localAudioPath: localAudio,
-      audioUrl: localAudio == null ? audioUrl : null,
-      startAt: startAt,
-      fromVideo: true,
-      videoQuality: quality,
-      videoFormat: format,
-    );
-    if (!started) {
-      // The music pipeline refused — bring the video back exactly
-      // where it was.
-      try {
-        await _player?.play();
-      } catch (_) {}
+      await player.setVideoTrack(VideoTrack.no());
+          .timeout(const Duration(seconds: 4));
+    } catch (_) {
       return false;
     }
-
-    // Music starting already closes the video (onPlaybackStarting in
-    // main.dart); make sure everything is torn down even if that
-    // callback lagged behind.
-    if (currentVideo != null) await close();
+    audioOnlyMode = true;
+    _savePlaybackState();
+    notifyListeners();
+    // Background audio + notification controls. Runs after the toggle
+    // so the UI reacts instantly; the notification appears once the
+    // (shared) audio service is ready.
+    unawaited(_attachNotificationBridge());
     return true;
+  }
+
+  /// Returns to video mode: re-enables the video track on the same
+  /// player and dismisses the notification. Playback continues at the
+  /// exact spot the audio reached — nothing is reloaded or re-seeked.
+  Future<void> exitAudioOnly() async {
+    if (!audioOnlyMode) return;
+    audioOnlyMode = false;
+    try {
+      await _player?.setVideoTrack(VideoTrack.auto());
+    } catch (_) {}
+    _savePlaybackState();
+    await _detachNotificationBridge();
+    notifyListeners();
+  }
+
+  // ─────────── Notification bridge ───────────
+
+  /// Borrows the shared media notification while audio-only runs.
+  /// Attach happens in the background: a cold audio-service start can
+  /// take a moment, and the mode itself must never wait on it.
+  Future<void> _attachNotificationBridge() async {
+    if (_notificationHandler != null || _attachingBridge) return;
+    _attachingBridge = true;
+    try {
+      final handler = await sharedAudioHandler();
+      final player = _player;
+      final video = currentVideo;
+      if (!audioOnlyMode || player == null || video == null) return;
+      _notificationHandler = handler;
+      handler.attachVideoAudio(VideoAudioController(
+        play: () async => player.play(),
+        pause: () async => player.pause(),
+        seek: (position) => seekTo(position),
+        stop: () => close(),
+      ));
+      handler.setVideoMediaItem(MediaItem(
+        id: 'audio:${video.id}',
+        title: video.title,
+        artist: video.uploader,
+        artUri: video.thumbnailUrl.isEmpty
+            ? null
+            : Uri.tryParse(video.thumbnailUrl),
+        duration: duration > Duration.zero ? duration : null,
+      ));
+      _bridgeSubs = [
+        player.stream.playing.listen((_) => _pushBridgeState()),
+        player.stream.buffering.listen((_) => _pushBridgeState()),
+        player.stream.completed.listen((_) => _pushBridgeState()),
+        player.stream.duration.listen((d) {
+          handler.updateVideoDuration(d);
+          _pushBridgeState();
+        }),
+      ];
+      // Android extrapolates the progress bar between pushes from
+      // updatePosition + updateTime, so a slow heartbeat is plenty.
+      _bridgeTimer = Timer.periodic(
+        const Duration(seconds: 1),
+        (_) => _pushBridgeState(),
+      );
+      _pushBridgeState();
+    } catch (_) {
+      // The notification is a bonus — audio-only works without it.
+      await _detachNotificationBridge();
+    } finally {
+      _attachingBridge = false;
+    }
+  }
+
+  /// Releases the notification surface and dismisses the notification.
+  Future<void> _detachNotificationBridge() async {
+    _bridgeTimer?.cancel();
+    _bridgeTimer = null;
+    final subs = _bridgeSubs;
+    _bridgeSubs = [];
+    for (final sub in subs) {
+      await sub.cancel();
+    }
+    final handler = _notificationHandler;
+    _notificationHandler = null;
+    if (handler != null) await handler.detachVideoAudio();
+  }
+
+  /// Mirrors the player's live state into the media notification.
+  void _pushBridgeState() {
+    final handler = _notificationHandler;
+    final player = _player;
+    if (handler == null || player == null || !audioOnlyMode) return;
+    final processing = player.state.completed
+        ? AudioProcessingState.completed
+        : player.state.buffering
+            ? AudioProcessingState.buffering
+            : AudioProcessingState.ready;
+    handler.pushVideoState(
+      playing: isPlaying,
+      position: position,
+      buffered: player.state.buffer,
+      processing: processing,
+    );
   }
 
   Future<void> togglePlayPause() async {
@@ -449,6 +535,13 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
         title: currentAudioTrack?.label,
         language: currentAudioTrack?.locale,
       ));
+    }
+    // A fresh media load resets mpv's track selection — a quality swap
+    // (or any reopen) made while in audio-only mode must stay audio-only.
+    if (audioOnlyMode) {
+      try {
+        await _player?.setVideoTrack(VideoTrack.no());
+      } catch (_) {}
     }
     if (startAt != null) {
       position = startAt;
@@ -596,6 +689,7 @@ class VideoPlaybackService extends ChangeNotifier with WidgetsBindingObserver {
   @override
   void dispose() {
     _resumeGeneration++;
+    unawaited(_detachNotificationBridge());
     unawaited(_profile.endWatchSession());
     WidgetsBinding.instance.removeObserver(this);
     _notifyThrottle?.cancel();

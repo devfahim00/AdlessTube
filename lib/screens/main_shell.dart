@@ -16,6 +16,7 @@ import 'menu_screen.dart';
 import 'music_screen.dart';
 import 'player_screen.dart';
 import 'shorts_screen.dart';
+import 'video_audio_screen.dart';
 
 /// ═══════════════════════ MAIN SHELL (Bottom Pill Navbar) ═══════════════════════
 ///
@@ -353,16 +354,28 @@ class _MiniPlayerState extends State<_MiniPlayer>
             borderRadius: BorderRadius.circular(14),
             onTap: _open
                 ? () {
-                    Navigator.push(
-                      context,
-                      pushPlayerRoute(
-                        PlayerScreen(
-                          video: vps.currentVideo ?? video,
-                          download: vps.currentDownload,
+                    // Audio-only mode reopens the dedicated Now Playing
+                    // screen; a normal video reopens the player page.
+                    if (vps.audioOnlyMode) {
+                      Navigator.push(
+                        context,
+                        pushPlayerRoute(
+                          const VideoAudioScreen(),
+                          animationsEnabled: animations,
                         ),
-                        animationsEnabled: animations,
-                      ),
-                    );
+                      );
+                    } else {
+                      Navigator.push(
+                        context,
+                        pushPlayerRoute(
+                          PlayerScreen(
+                            video: vps.currentVideo ?? video,
+                            download: vps.currentDownload,
+                          ),
+                          animationsEnabled: animations,
+                        ),
+                      );
+                    }
                   }
                 : null,
             child: SizedBox(
@@ -376,22 +389,46 @@ class _MiniPlayerState extends State<_MiniPlayer>
                       children: [
                         // The live video itself — same controller, keeps
                         // playing while minimized (like the YouTube app).
+                        // Audio-only mode shows the thumbnail with an
+                        // audio badge instead (the video track is off).
                         ClipRRect(
                           borderRadius: BorderRadius.circular(8),
                           child: SizedBox(
                             width: 96,
                             height: 54,
-                            child: vps.hasActiveVideo
-                                ? Video(
-                                    controller: vps.controller,
-                                    fit: BoxFit.cover,
-                                    controls: NoVideoControls,
+                            child: vps.audioOnlyMode
+                                ? Stack(
+                                    fit: StackFit.expand,
+                                    children: [
+                                      VideoThumbnail(
+                                        videoId: video.id,
+                                        fallbackUrl: video.thumbnailUrl,
+                                        width: 96,
+                                        height: 54,
+                                        fit: BoxFit.cover,
+                                      ),
+                                      Container(
+                                        color: Colors.black
+                                            .withValues(alpha: 0.45),
+                                        child: const Icon(
+                                          Icons.headphones,
+                                          color: Colors.white,
+                                          size: 20,
+                                        ),
+                                      ),
+                                    ],
                                   )
-                                : Container(
-                                    color: Colors.black,
-                                    child: const Icon(Icons.videocam,
-                                        color: Colors.white70),
-                                  ),
+                                : vps.hasActiveVideo
+                                    ? Video(
+                                        controller: vps.controller,
+                                        fit: BoxFit.cover,
+                                        controls: NoVideoControls,
+                                      )
+                                    : Container(
+                                        color: Colors.black,
+                                        child: const Icon(Icons.videocam,
+                                            color: Colors.white70),
+                                      ),
                           ),
                         ),
                         const SizedBox(width: 10),
